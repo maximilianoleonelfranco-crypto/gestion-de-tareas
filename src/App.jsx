@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Check, Trash2, CheckCircle2, ListTodo, Users, UserPlus, Download, User, Calendar, History, TrendingUp, AlertCircle, MessageSquare, Pin } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Plus, Check, Trash2, CheckCircle2, ListTodo, Users, UserPlus, Download, User, Calendar, History, TrendingUp, AlertCircle, MessageSquare, Pin, Camera, Tag, Loader2 } from 'lucide-react';
 
 const APP_VERSION = 2;
 import { db } from './firebase';
 import { collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, query, orderBy } from 'firebase/firestore';
 
 function App() {
-  const [currentView, setCurrentView] = useState('tasks'); // 'tasks', 'history', 'productivity', 'staff', 'reminders'
+  const [currentView, setCurrentView] = useState('tasks'); // 'tasks', 'history', 'productivity', 'staff', 'reminders', 'offers'
   
   // Tasks state
   const [tasks, setTasks] = useState([]);
@@ -26,6 +26,11 @@ function App() {
   const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
   const [newReminderText, setNewReminderText] = useState('');
 
+  // Offers state
+  const [offers, setOffers] = useState([]);
+  const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
+  const fileInputRef = useRef(null);
+
   // Staff state
   const [staff, setStaff] = useState([]);
   const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
@@ -33,26 +38,30 @@ function App() {
   const [updateConfig, setUpdateConfig] = useState(null);
 
   useEffect(() => {
-    // Update Checker Listener
+    // Update Checker
     const unsubscribeUpdate = onSnapshot(doc(db, 'settings', 'appConfig'), (snapshot) => {
-      if (snapshot.exists()) {
-        setUpdateConfig(snapshot.data());
-      }
+      if (snapshot.exists()) setUpdateConfig(snapshot.data());
     });
 
-    // Tasks Listener
+    // Tasks
     const qTasks = query(collection(db, 'tasks'), orderBy('createdAt', 'desc'));
     const unsubscribeTasks = onSnapshot(qTasks, (snapshot) => {
       setTasks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
-    // Reminders Listener
+    // Reminders
     const qReminders = query(collection(db, 'reminders'), orderBy('createdAt', 'desc'));
     const unsubscribeReminders = onSnapshot(qReminders, (snapshot) => {
       setReminders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
-    // Staff Listener
+    // Offers
+    const qOffers = query(collection(db, 'offers'), orderBy('createdAt', 'desc'));
+    const unsubscribeOffers = onSnapshot(qOffers, (snapshot) => {
+      setOffers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    // Staff
     const qStaff = query(collection(db, 'staff'), orderBy('createdAt', 'desc'));
     const unsubscribeStaff = onSnapshot(qStaff, (snapshot) => {
       setStaff(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -62,90 +71,102 @@ function App() {
       unsubscribeTasks();
       unsubscribeStaff();
       unsubscribeReminders();
+      unsubscribeOffers();
       unsubscribeUpdate();
     };
   }, []);
 
   // --- Tasks Logic ---
-  const deleteTask = async (id) => {
-    await deleteDoc(doc(db, 'tasks', id));
-  };
+  const deleteTask = async (id) => await deleteDoc(doc(db, 'tasks', id));
 
   const addTask = async (e) => {
     e.preventDefault();
     if (!newTaskTitle.trim() || !newTaskAssignee || !newTaskDate) return;
     
     await addDoc(collection(db, 'tasks'), { 
-      title: newTaskTitle, 
-      assignee: newTaskAssignee,
-      targetDate: newTaskDate,
-      completed: false,
-      status: 'pending',
-      createdAt: new Date().getTime() 
+      title: newTaskTitle, assignee: newTaskAssignee, targetDate: newTaskDate,
+      completed: false, status: 'pending', createdAt: new Date().getTime() 
     });
-    
-    setNewTaskTitle('');
-    setNewTaskAssignee('');
-    setIsTaskModalOpen(false);
+    setNewTaskTitle(''); setNewTaskAssignee(''); setIsTaskModalOpen(false);
   };
 
   const openCompletionModal = (task) => {
-    setTaskToComplete(task);
-    setCompletionStatus('success');
-    setCompletionComment('');
-    setIsCompletionModalOpen(true);
+    setTaskToComplete(task); setCompletionStatus('success'); setCompletionComment(''); setIsCompletionModalOpen(true);
   };
 
   const submitCompletion = async (e) => {
     e.preventDefault();
     if (completionStatus === 'failed' && !completionComment.trim()) return;
-
     if (taskToComplete) {
       await updateDoc(doc(db, 'tasks', taskToComplete.id), { 
-        completed: true,
-        status: completionStatus,
-        comment: completionComment.trim()
+        completed: true, status: completionStatus, comment: completionComment.trim()
       });
     }
-    
-    setIsCompletionModalOpen(false);
-    setTaskToComplete(null);
+    setIsCompletionModalOpen(false); setTaskToComplete(null);
   };
 
   // --- Reminders Logic ---
   const addReminder = async (e) => {
     e.preventDefault();
     if (!newReminderText.trim()) return;
-    
-    await addDoc(collection(db, 'reminders'), { 
-      text: newReminderText, 
-      createdAt: new Date().getTime() 
-    });
-    
-    setNewReminderText('');
-    setIsReminderModalOpen(false);
+    await addDoc(collection(db, 'reminders'), { text: newReminderText, createdAt: new Date().getTime() });
+    setNewReminderText(''); setIsReminderModalOpen(false);
   };
+  const deleteReminder = async (id) => await deleteDoc(doc(db, 'reminders', id));
 
-  const deleteReminder = async (id) => {
-    await deleteDoc(doc(db, 'reminders', id));
+  // --- Offers Logic (AI) ---
+  const deleteOffer = async (id) => await deleteDoc(doc(db, 'offers', id));
+
+  const handleImageCapture = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setIsAnalyzingImage(true);
+    try {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64Data = reader.result;
+        
+        const response = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageBase64: base64Data })
+        });
+        
+        if (!response.ok) throw new Error('Error en API');
+        const data = await response.json();
+        
+        if (data.offers && data.offers.length > 0) {
+          for (const offer of data.offers) {
+            await addDoc(collection(db, 'offers'), {
+              ...offer,
+              createdAt: new Date().getTime()
+            });
+          }
+          alert(`¡Éxito! Se extrajeron ${data.offers.length} ofertas.`);
+        } else {
+          alert('No se detectaron ofertas claras en la imagen.');
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (error) {
+      console.error(error);
+      alert('Hubo un error al procesar la foto con Inteligencia Artificial.');
+    } finally {
+      setIsAnalyzingImage(false);
+      // Reset input
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   // --- Staff Logic ---
-  const deleteStaff = async (id) => {
-    await deleteDoc(doc(db, 'staff', id));
-  };
+  const deleteStaff = async (id) => await deleteDoc(doc(db, 'staff', id));
 
   const addStaff = async (e) => {
     e.preventDefault();
     if (!newStaffName.trim()) return;
-    
-    await addDoc(collection(db, 'staff'), { 
-      name: newStaffName, 
-      createdAt: new Date().getTime() 
-    });
-    
-    setNewStaffName('');
-    setIsStaffModalOpen(false);
+    await addDoc(collection(db, 'staff'), { name: newStaffName, createdAt: new Date().getTime() });
+    setNewStaffName(''); setIsStaffModalOpen(false);
   };
 
   // --- Derived Data ---
@@ -158,19 +179,33 @@ function App() {
     const total = personTasks.length;
     const successful = personTasks.filter(t => t.status !== 'failed').length;
     const percentage = total === 0 ? 0 : Math.round((successful / total) * 100);
-    
-    return {
-      ...person,
-      total,
-      successful,
-      percentage
-    };
+    return { ...person, total, successful, percentage };
   }).sort((a, b) => b.percentage - a.percentage);
 
   const needsUpdate = false; 
 
   return (
     <div className="app-container">
+      {/* Hidden input for camera */}
+      <input 
+        type="file" 
+        accept="image/*" 
+        capture="environment" 
+        ref={fileInputRef} 
+        style={{ display: 'none' }} 
+        onChange={handleImageCapture} 
+      />
+
+      {isAnalyzingImage && (
+        <div className="modal-overlay" style={{ zIndex: 9999 }}>
+          <div className="update-modal" style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}>
+            <Loader2 size={48} className="lucide-spin" style={{ color: '#3b82f6', margin: '0 auto', animation: 'spin 2s linear infinite' }} />
+            <h2 style={{ color: 'white', marginTop: '16px' }}>Analizando imagen con IA...</h2>
+            <p style={{ color: 'white' }}>Extrayendo ofertas y precios</p>
+          </div>
+        </div>
+      )}
+
       {/* Dynamic Header */}
       <header className="header">
         {currentView === 'tasks' && (
@@ -197,6 +232,12 @@ function App() {
             <p>Recordatorios personales ({reminders.length})</p>
           </>
         )}
+        {currentView === 'offers' && (
+          <>
+            <h1>Escáner IA</h1>
+            <p>Ofertas extraídas ({offers.length})</p>
+          </>
+        )}
         {currentView === 'staff' && (
           <>
             <h1>Personal</h1>
@@ -212,7 +253,6 @@ function App() {
             <div className="empty-state">
               <CheckCircle2 size={48} />
               <h3>¡Todo al día!</h3>
-              <p>Disfruta tu tiempo libre o añade más tareas.</p>
             </div>
           ) : (
             pendingTasks.map(task => (
@@ -220,28 +260,14 @@ function App() {
                 <div className="checkbox-wrapper" onClick={() => openCompletionModal(task)}>
                   <Check className="checkbox-icon" />
                 </div>
-                
                 <div className="task-content">
                   <span className="task-title">{task.title}</span>
                   <div className="task-meta">
-                    {task.assignee && (
-                      <div className="task-badge bg-blue">
-                        <User size={10} />
-                        {task.assignee}
-                      </div>
-                    )}
-                    {task.targetDate && (
-                      <div className="task-badge bg-gray">
-                        <Calendar size={10} />
-                        {new Date(task.targetDate + 'T12:00:00Z').toLocaleDateString()}
-                      </div>
-                    )}
+                    {task.assignee && <div className="task-badge bg-blue"><User size={10} />{task.assignee}</div>}
+                    {task.targetDate && <div className="task-badge bg-gray"><Calendar size={10} />{new Date(task.targetDate + 'T12:00:00Z').toLocaleDateString()}</div>}
                   </div>
                 </div>
-                
-                <button className="delete-btn" onClick={() => deleteTask(task.id)}>
-                  <Trash2 size={18} />
-                </button>
+                <button className="delete-btn" onClick={() => deleteTask(task.id)}><Trash2 size={18} /></button>
               </div>
             ))
           )}
@@ -251,49 +277,24 @@ function App() {
       {currentView === 'history' && (
         <div className="task-list">
           {completedTasks.length === 0 ? (
-             <div className="empty-state">
-              <History size={48} />
-              <h3>Aún no hay historial</h3>
-              <p>Las tareas que finalices aparecerán aquí.</p>
-            </div>
+             <div className="empty-state"><History size={48} /><h3>Aún no hay historial</h3></div>
           ) : (
             completedTasks.map(task => (
               <div key={task.id} className="glass-panel task-card completed">
-                <div className="checkbox-wrapper completed" style={{ 
-                  background: task.status === 'failed' ? 'var(--danger-color)' : 'var(--success-color)' 
-                }}>
+                <div className="checkbox-wrapper completed" style={{ background: task.status === 'failed' ? 'var(--danger-color)' : 'var(--success-color)' }}>
                   {task.status === 'failed' ? <AlertCircle size={14} color="white" /> : <Check className="checkbox-icon" style={{ opacity: 1, transform: 'scale(1)' }} />}
                 </div>
-                
                 <div className="task-content">
-                  <span className="task-title" style={{ 
-                    textDecoration: 'none', 
-                    color: task.status === 'failed' ? 'var(--text-primary)' : 'var(--success-color)' 
-                  }}>
-                    {task.title}
-                  </span>
+                  <span className="task-title" style={{ textDecoration: 'none', color: task.status === 'failed' ? 'var(--text-primary)' : 'var(--success-color)' }}>{task.title}</span>
                   <div className="task-meta">
                     <div className={`task-badge ${task.status === 'failed' ? 'bg-red' : 'bg-green'}`}>
                       {task.status === 'failed' ? 'No Realizada' : 'Realizada'}
                     </div>
-                    {task.assignee && (
-                      <div className="task-badge bg-blue">
-                        <User size={10} />
-                        {task.assignee}
-                      </div>
-                    )}
+                    {task.assignee && <div className="task-badge bg-blue"><User size={10} />{task.assignee}</div>}
                   </div>
-                  {task.comment && (
-                    <div className="task-comment">
-                      <MessageSquare size={12} />
-                      {task.comment}
-                    </div>
-                  )}
+                  {task.comment && <div className="task-comment"><MessageSquare size={12} />{task.comment}</div>}
                 </div>
-                
-                <button className="delete-btn" onClick={() => deleteTask(task.id)}>
-                  <Trash2 size={18} />
-                </button>
+                <button className="delete-btn" onClick={() => deleteTask(task.id)}><Trash2 size={18} /></button>
               </div>
             ))
           )}
@@ -303,11 +304,7 @@ function App() {
       {currentView === 'productivity' && (
         <div className="task-list">
           {productivityRanking.length === 0 ? (
-            <div className="empty-state">
-              <TrendingUp size={48} />
-              <h3>Sin datos</h3>
-              <p>Agrega personal para medir su productividad.</p>
-            </div>
+            <div className="empty-state"><TrendingUp size={48} /><h3>Sin datos</h3></div>
           ) : (
             productivityRanking.map((person, index) => (
               <div key={person.id} className="glass-panel prod-card">
@@ -317,10 +314,7 @@ function App() {
                   <div className="prod-percentage">{person.percentage}%</div>
                 </div>
                 <div className="prod-progress-bg">
-                  <div className="prod-progress-fill" style={{ 
-                    width: `${person.percentage}%`, 
-                    background: person.percentage >= 80 ? 'var(--success-color)' : person.percentage >= 50 ? '#eab308' : 'var(--danger-color)' 
-                  }}></div>
+                  <div className="prod-progress-fill" style={{ width: `${person.percentage}%`, background: person.percentage >= 80 ? 'var(--success-color)' : person.percentage >= 50 ? '#eab308' : 'var(--danger-color)' }}></div>
                 </div>
                 <div className="prod-stats">
                   <span>{person.successful} Éxitos</span>
@@ -336,25 +330,53 @@ function App() {
       {currentView === 'reminders' && (
         <div className="task-list">
           {reminders.length === 0 ? (
-            <div className="empty-state">
-              <Pin size={48} />
-              <h3>Sin recordatorios</h3>
-              <p>Añade notas personales aquí.</p>
-            </div>
+            <div className="empty-state"><Pin size={48} /><h3>Sin recordatorios</h3></div>
           ) : (
             reminders.map(reminder => (
               <div key={reminder.id} className="glass-panel task-card">
                 <div className="checkbox-wrapper" style={{ border: 'none', background: 'rgba(59, 130, 246, 0.2)' }}>
                   <Pin className="checkbox-icon" style={{ opacity: 1, transform: 'scale(1)', color: '#3b82f6' }} />
                 </div>
-                
                 <div className="task-content">
                   <span className="task-title" style={{ whiteSpace: 'pre-wrap' }}>{reminder.text}</span>
                 </div>
+                <button className="delete-btn" onClick={() => deleteReminder(reminder.id)}><Trash2 size={18} /></button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {currentView === 'offers' && (
+        <div className="task-list">
+          {offers.length === 0 ? (
+            <div className="empty-state">
+              <Camera size={48} />
+              <h3>Ninguna oferta escaneada</h3>
+              <p>Toma una foto de un documento para extraer datos.</p>
+            </div>
+          ) : (
+            offers.map(offer => (
+              <div key={offer.id} className="glass-panel task-card" style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div className="checkbox-wrapper" style={{ border: 'none', background: 'rgba(16, 185, 129, 0.2)' }}>
+                      <Tag className="checkbox-icon" style={{ opacity: 1, transform: 'scale(1)', color: 'var(--success-color)' }} />
+                    </div>
+                    <span className="task-title" style={{ color: 'var(--success-color)' }}>{offer.productName || 'Oferta'}</span>
+                  </div>
+                  <button className="delete-btn" onClick={() => deleteOffer(offer.id)}><Trash2 size={18} /></button>
+                </div>
                 
-                <button className="delete-btn" onClick={() => deleteReminder(reminder.id)}>
-                  <Trash2 size={18} />
-                </button>
+                <div className="task-content" style={{ width: '100%', paddingLeft: '40px' }}>
+                  <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '4px' }}>{offer.price}</div>
+                  {offer.details && (
+                    <div className="task-comment" style={{ marginTop: '4px' }}>
+                      <MessageSquare size={12} />
+                      {offer.details}
+                    </div>
+                  )}
+                </div>
               </div>
             ))
           )}
@@ -364,233 +386,138 @@ function App() {
       {currentView === 'staff' && (
         <div className="task-list">
           {staff.length === 0 ? (
-            <div className="empty-state">
-              <Users size={48} />
-              <h3>Sin personal</h3>
-              <p>Añade a los miembros de tu equipo.</p>
-            </div>
+            <div className="empty-state"><Users size={48} /><h3>Sin personal</h3></div>
           ) : (
             staff.map(person => (
               <div key={person.id} className="glass-panel task-card">
                 <div className="checkbox-wrapper" style={{ border: 'none', background: 'rgba(59, 130, 246, 0.2)' }}>
                   <Users className="checkbox-icon" style={{ opacity: 1, transform: 'scale(1)', color: '#3b82f6' }} />
                 </div>
-                
-                <div className="task-content">
-                  <span className="task-title">{person.name}</span>
-                </div>
-                
-                <button className="delete-btn" onClick={() => deleteStaff(person.id)}>
-                  <Trash2 size={18} />
-                </button>
+                <div className="task-content"><span className="task-title">{person.name}</span></div>
+                <button className="delete-btn" onClick={() => deleteStaff(person.id)}><Trash2 size={18} /></button>
               </div>
             ))
           )}
         </div>
       )}
 
-      {/* Dynamic FAB based on view */}
+      {/* Dynamic FAB */}
       <button 
         className="fab" 
-        style={{ display: (currentView === 'tasks' || currentView === 'staff' || currentView === 'reminders') ? 'flex' : 'none' }}
+        style={{ display: (currentView === 'tasks' || currentView === 'staff' || currentView === 'reminders' || currentView === 'offers') ? 'flex' : 'none' }}
         onClick={() => {
           if (currentView === 'tasks') setIsTaskModalOpen(true);
           else if (currentView === 'staff') setIsStaffModalOpen(true);
           else if (currentView === 'reminders') setIsReminderModalOpen(true);
+          else if (currentView === 'offers' && fileInputRef.current) fileInputRef.current.click();
         }}
       >
         {currentView === 'tasks' && <Plus size={28} />}
         {currentView === 'staff' && <UserPlus size={28} />}
         {currentView === 'reminders' && <Plus size={28} />}
+        {currentView === 'offers' && <Camera size={28} />}
       </button>
 
-      {/* Bottom Navigation Bar */}
-      <nav className="bottom-nav" style={{ padding: '0 8px', justifyContent: 'space-between' }}>
-        <button className={`nav-item ${currentView === 'tasks' ? 'active' : ''}`} onClick={() => setCurrentView('tasks')}>
+      {/* Bottom Navigation */}
+      <nav className="bottom-nav" style={{ padding: '0 4px', justifyContent: 'space-between', gap: '2px' }}>
+        <button className={`nav-item ${currentView === 'tasks' ? 'active' : ''}`} onClick={() => setCurrentView('tasks')} style={{ padding: '8px 2px' }}>
           <ListTodo size={20} />
-          <span style={{ fontSize: '10px' }}>Tareas</span>
+          <span style={{ fontSize: '9px', marginTop: '2px' }}>Pendientes</span>
         </button>
-        <button className={`nav-item ${currentView === 'history' ? 'active' : ''}`} onClick={() => setCurrentView('history')}>
+        <button className={`nav-item ${currentView === 'history' ? 'active' : ''}`} onClick={() => setCurrentView('history')} style={{ padding: '8px 2px' }}>
           <History size={20} />
-          <span style={{ fontSize: '10px' }}>Realizadas</span>
+          <span style={{ fontSize: '9px', marginTop: '2px' }}>Realizadas</span>
         </button>
-        <button className={`nav-item ${currentView === 'productivity' ? 'active' : ''}`} onClick={() => setCurrentView('productivity')}>
+        <button className={`nav-item ${currentView === 'productivity' ? 'active' : ''}`} onClick={() => setCurrentView('productivity')} style={{ padding: '8px 2px' }}>
           <TrendingUp size={20} />
-          <span style={{ fontSize: '10px' }}>Ranking</span>
+          <span style={{ fontSize: '9px', marginTop: '2px' }}>Ranking</span>
         </button>
-        <button className={`nav-item ${currentView === 'reminders' ? 'active' : ''}`} onClick={() => setCurrentView('reminders')}>
+        <button className={`nav-item ${currentView === 'reminders' ? 'active' : ''}`} onClick={() => setCurrentView('reminders')} style={{ padding: '8px 2px' }}>
           <Pin size={20} />
-          <span style={{ fontSize: '10px' }}>Notas</span>
+          <span style={{ fontSize: '9px', marginTop: '2px' }}>Notas</span>
         </button>
-        <button className={`nav-item ${currentView === 'staff' ? 'active' : ''}`} onClick={() => setCurrentView('staff')}>
+        <button className={`nav-item ${currentView === 'offers' ? 'active' : ''}`} onClick={() => setCurrentView('offers')} style={{ padding: '8px 2px' }}>
+          <Tag size={20} />
+          <span style={{ fontSize: '9px', marginTop: '2px' }}>Ofertas</span>
+        </button>
+        <button className={`nav-item ${currentView === 'staff' ? 'active' : ''}`} onClick={() => setCurrentView('staff')} style={{ padding: '8px 2px' }}>
           <Users size={20} />
-          <span style={{ fontSize: '10px' }}>Personal</span>
+          <span style={{ fontSize: '9px', marginTop: '2px' }}>Personal</span>
         </button>
       </nav>
 
-      {/* Task Modal */}
+      {/* Modals... */}
       {isTaskModalOpen && (
-        <div className="modal-overlay" onClick={(e) => {
-          if (e.target.className === 'modal-overlay') setIsTaskModalOpen(false);
-        }}>
+        <div className="modal-overlay" onClick={(e) => { if (e.target.className === 'modal-overlay') setIsTaskModalOpen(false); }}>
           <div className="bottom-sheet">
             <h2>Nueva Tarea</h2>
             <form onSubmit={addTask}>
               <div className="input-group">
-                <input
-                  type="text"
-                  className="input-field"
-                  placeholder="¿Qué necesitas hacer?"
-                  value={newTaskTitle}
-                  onChange={(e) => setNewTaskTitle(e.target.value)}
-                  autoFocus
-                  style={{ marginBottom: '16px' }}
-                />
-                <input
-                  type="date"
-                  className="input-field"
-                  value={newTaskDate}
-                  onChange={(e) => setNewTaskDate(e.target.value)}
-                  style={{ marginBottom: '16px' }}
-                />
-                <select
-                  className="input-field select-field"
-                  value={newTaskAssignee}
-                  onChange={(e) => setNewTaskAssignee(e.target.value)}
-                >
+                <input type="text" className="input-field" placeholder="¿Qué necesitas hacer?" value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} autoFocus style={{ marginBottom: '16px' }} />
+                <input type="date" className="input-field" value={newTaskDate} onChange={(e) => setNewTaskDate(e.target.value)} style={{ marginBottom: '16px' }} />
+                <select className="input-field select-field" value={newTaskAssignee} onChange={(e) => setNewTaskAssignee(e.target.value)}>
                   <option value="" disabled>Selecciona un funcionario</option>
-                  {staff.map(person => (
-                    <option key={person.id} value={person.name}>{person.name}</option>
-                  ))}
+                  {staff.map(person => <option key={person.id} value={person.name}>{person.name}</option>)}
                 </select>
               </div>
-              <button 
-                type="submit" 
-                className="btn-primary"
-                disabled={!newTaskTitle.trim() || !newTaskAssignee || !newTaskDate}
-              >
-                Añadir Tarea
-              </button>
+              <button type="submit" className="btn-primary" disabled={!newTaskTitle.trim() || !newTaskAssignee || !newTaskDate}>Añadir Tarea</button>
             </form>
           </div>
         </div>
       )}
 
-      {/* Reminder Modal */}
       {isReminderModalOpen && (
-        <div className="modal-overlay" onClick={(e) => {
-          if (e.target.className === 'modal-overlay') setIsReminderModalOpen(false);
-        }}>
+        <div className="modal-overlay" onClick={(e) => { if (e.target.className === 'modal-overlay') setIsReminderModalOpen(false); }}>
           <div className="bottom-sheet">
             <h2>Nuevo Recordatorio</h2>
             <form onSubmit={addReminder}>
               <div className="input-group">
-                <textarea
-                  className="input-field"
-                  placeholder="Escribe tu nota aquí..."
-                  value={newReminderText}
-                  onChange={(e) => setNewReminderText(e.target.value)}
-                  autoFocus
-                  rows="3"
-                  style={{ resize: 'none' }}
-                />
+                <textarea className="input-field" placeholder="Escribe tu nota aquí..." value={newReminderText} onChange={(e) => setNewReminderText(e.target.value)} autoFocus rows="3" style={{ resize: 'none' }} />
               </div>
-              <button 
-                type="submit" 
-                className="btn-primary"
-                disabled={!newReminderText.trim()}
-              >
-                Guardar Nota
-              </button>
+              <button type="submit" className="btn-primary" disabled={!newReminderText.trim()}>Guardar Nota</button>
             </form>
           </div>
         </div>
       )}
 
-      {/* Staff Modal */}
       {isStaffModalOpen && (
-        <div className="modal-overlay" onClick={(e) => {
-          if (e.target.className === 'modal-overlay') setIsStaffModalOpen(false);
-        }}>
+        <div className="modal-overlay" onClick={(e) => { if (e.target.className === 'modal-overlay') setIsStaffModalOpen(false); }}>
           <div className="bottom-sheet">
             <h2>Nuevo Miembro</h2>
             <form onSubmit={addStaff}>
               <div className="input-group">
-                <input
-                  type="text"
-                  className="input-field"
-                  placeholder="Nombre del empleado"
-                  value={newStaffName}
-                  onChange={(e) => setNewStaffName(e.target.value)}
-                  autoFocus
-                />
+                <input type="text" className="input-field" placeholder="Nombre del empleado" value={newStaffName} onChange={(e) => setNewStaffName(e.target.value)} autoFocus />
               </div>
-              <button 
-                type="submit" 
-                className="btn-primary"
-                disabled={!newStaffName.trim()}
-              >
-                Añadir Personal
-              </button>
+              <button type="submit" className="btn-primary" disabled={!newStaffName.trim()}>Añadir Personal</button>
             </form>
           </div>
         </div>
       )}
 
-      {/* Completion Modal */}
       {isCompletionModalOpen && (
         <div className="modal-overlay" onClick={(e) => {
-          if (e.target.className === 'modal-overlay') {
-            setIsCompletionModalOpen(false);
-            setTaskToComplete(null);
-          }
+          if (e.target.className === 'modal-overlay') { setIsCompletionModalOpen(false); setTaskToComplete(null); }
         }}>
           <div className="bottom-sheet">
             <h2>Finalizar Tarea</h2>
             <p style={{ color: 'var(--text-secondary)', marginBottom: '20px' }}>{taskToComplete?.title}</p>
             <form onSubmit={submitCompletion}>
-              
               <div className="completion-toggle">
-                <button 
-                  type="button"
-                  className={`toggle-btn ${completionStatus === 'success' ? 'active-success' : ''}`}
-                  onClick={() => setCompletionStatus('success')}
-                >
-                  <CheckCircle2 size={20} />
-                  Realizada
+                <button type="button" className={`toggle-btn ${completionStatus === 'success' ? 'active-success' : ''}`} onClick={() => setCompletionStatus('success')}>
+                  <CheckCircle2 size={20} /> Realizada
                 </button>
-                <button 
-                  type="button"
-                  className={`toggle-btn ${completionStatus === 'failed' ? 'active-danger' : ''}`}
-                  onClick={() => setCompletionStatus('failed')}
-                >
-                  <AlertCircle size={20} />
-                  No Realizada
+                <button type="button" className={`toggle-btn ${completionStatus === 'failed' ? 'active-danger' : ''}`} onClick={() => setCompletionStatus('failed')}>
+                  <AlertCircle size={20} /> No Realizada
                 </button>
               </div>
-
               <div className="input-group">
-                <textarea
-                  className="input-field"
-                  placeholder={completionStatus === 'failed' ? 'Motivo (Obligatorio)...' : 'Comentarios (Opcional)...'}
-                  value={completionComment}
-                  onChange={(e) => setCompletionComment(e.target.value)}
-                  rows="3"
-                  style={{ resize: 'none', marginTop: '16px' }}
-                ></textarea>
+                <textarea className="input-field" placeholder={completionStatus === 'failed' ? 'Motivo (Obligatorio)...' : 'Comentarios (Opcional)...'} value={completionComment} onChange={(e) => setCompletionComment(e.target.value)} rows="3" style={{ resize: 'none', marginTop: '16px' }}></textarea>
               </div>
-              <button 
-                type="submit" 
-                className="btn-primary"
-                disabled={completionStatus === 'failed' && !completionComment.trim()}
-              >
-                Guardar Registro
-              </button>
+              <button type="submit" className="btn-primary" disabled={completionStatus === 'failed' && !completionComment.trim()}>Guardar Registro</button>
             </form>
           </div>
         </div>
       )}
-
     </div>
   );
 }

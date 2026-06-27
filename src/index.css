@@ -440,6 +440,19 @@ select.input-field option {
   color: var(--accent-color);
 }
 
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.lucide-spin {
+  animation: spin 1s linear infinite;
+}
+
 /* Task Meta and Badges */
 .task-meta {
   display: flex;
