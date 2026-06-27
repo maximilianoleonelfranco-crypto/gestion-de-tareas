@@ -165,6 +165,13 @@ function App() {
       });
       
       if (!response.ok) {
+        let errorDetails = '';
+        try {
+          const errData = await response.json();
+          if (errData.details) errorDetails = errData.details;
+        } catch(e) {}
+        
+        if (errorDetails) throw new Error(`Error de IA: ${errorDetails}`);
         if (response.status === 413) throw new Error('La imagen es demasiado pesada.');
         if (response.status === 504) throw new Error('La IA tardó demasiado en responder (Timeout).');
         throw new Error('Error en los servidores de IA.');
