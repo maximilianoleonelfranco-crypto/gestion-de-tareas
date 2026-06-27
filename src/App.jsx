@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Check, Trash2, CheckCircle2, ListTodo, Users, UserPlus, Download, User, Calendar, History, TrendingUp, AlertCircle, MessageSquare } from 'lucide-react';
+import { Plus, Check, Trash2, CheckCircle2, ListTodo, Users, UserPlus, Download, User, Calendar, History, TrendingUp, AlertCircle, MessageSquare, Pin } from 'lucide-react';
 
 const APP_VERSION = 2;
 import { db } from './firebase';
 import { collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, query, orderBy } from 'firebase/firestore';
 
 function App() {
-  const [currentView, setCurrentView] = useState('tasks'); // 'tasks', 'history', 'productivity', 'staff'
+  const [currentView, setCurrentView] = useState('tasks'); // 'tasks', 'history', 'productivity', 'staff', 'reminders'
   
   // Tasks state
   const [tasks, setTasks] = useState([]);
@@ -18,8 +18,13 @@ function App() {
   // Completion Modal state
   const [isCompletionModalOpen, setIsCompletionModalOpen] = useState(false);
   const [taskToComplete, setTaskToComplete] = useState(null);
-  const [completionStatus, setCompletionStatus] = useState('success'); // 'success' or 'failed'
+  const [completionStatus, setCompletionStatus] = useState('success'); 
   const [completionComment, setCompletionComment] = useState('');
+
+  // Reminders state
+  const [reminders, setReminders] = useState([]);
+  const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
+  const [newReminderText, setNewReminderText] = useState('');
 
   // Staff state
   const [staff, setStaff] = useState([]);
@@ -34,10 +39,17 @@ function App() {
         setUpdateConfig(snapshot.data());
       }
     });
+
     // Tasks Listener
     const qTasks = query(collection(db, 'tasks'), orderBy('createdAt', 'desc'));
     const unsubscribeTasks = onSnapshot(qTasks, (snapshot) => {
       setTasks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    // Reminders Listener
+    const qReminders = query(collection(db, 'reminders'), orderBy('createdAt', 'desc'));
+    const unsubscribeReminders = onSnapshot(qReminders, (snapshot) => {
+      setReminders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
     // Staff Listener
@@ -49,6 +61,7 @@ function App() {
     return () => {
       unsubscribeTasks();
       unsubscribeStaff();
+      unsubscribeReminders();
       unsubscribeUpdate();
     };
   }, []);
@@ -76,7 +89,6 @@ function App() {
     setIsTaskModalOpen(false);
   };
 
-  // --- Completion Logic ---
   const openCompletionModal = (task) => {
     setTaskToComplete(task);
     setCompletionStatus('success');
@@ -98,6 +110,24 @@ function App() {
     
     setIsCompletionModalOpen(false);
     setTaskToComplete(null);
+  };
+
+  // --- Reminders Logic ---
+  const addReminder = async (e) => {
+    e.preventDefault();
+    if (!newReminderText.trim()) return;
+    
+    await addDoc(collection(db, 'reminders'), { 
+      text: newReminderText, 
+      createdAt: new Date().getTime() 
+    });
+    
+    setNewReminderText('');
+    setIsReminderModalOpen(false);
+  };
+
+  const deleteReminder = async (id) => {
+    await deleteDoc(doc(db, 'reminders', id));
   };
 
   // --- Staff Logic ---
@@ -137,31 +167,11 @@ function App() {
     };
   }).sort((a, b) => b.percentage - a.percentage);
 
-  // Desactivado para la versión web en Vercel
   const needsUpdate = false; 
 
   return (
     <div className="app-container">
-      {/* UPDATE MODAL OVERLAY */}
-      {needsUpdate && (
-        <div className="modal-overlay" style={{ zIndex: 9999 }}>
-          <div className="update-modal">
-            <div className="update-icon-wrapper">
-              <Download size={32} color="#3b82f6" />
-            </div>
-            <h2>¡Actualización Disponible!</h2>
-            <p>Hay una nueva y mejor versión de la aplicación. Por favor, descárgala para continuar.</p>
-            <button 
-              className="btn-primary"
-              onClick={() => window.open(updateConfig.downloadUrl, '_system')}
-            >
-              Descargar e Instalar
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Dynamic Header based on view */}
+      {/* Dynamic Header */}
       <header className="header">
         {currentView === 'tasks' && (
           <>
@@ -181,10 +191,16 @@ function App() {
             <p>Rendimiento del equipo</p>
           </>
         )}
+        {currentView === 'reminders' && (
+          <>
+            <h1>Mis Notas</h1>
+            <p>Recordatorios personales ({reminders.length})</p>
+          </>
+        )}
         {currentView === 'staff' && (
           <>
             <h1>Personal</h1>
-            <p>Gestiona tu equipo de trabajo</p>
+            <p>Gestiona tu equipo</p>
           </>
         )}
       </header>
@@ -250,7 +266,12 @@ function App() {
                 </div>
                 
                 <div className="task-content">
-                  <span className="task-title" style={{ textDecoration: task.status === 'failed' ? 'none' : 'line-through' }}>{task.title}</span>
+                  <span className="task-title" style={{ 
+                    textDecoration: 'none', 
+                    color: task.status === 'failed' ? 'var(--text-primary)' : 'var(--success-color)' 
+                  }}>
+                    {task.title}
+                  </span>
                   <div className="task-meta">
                     <div className={`task-badge ${task.status === 'failed' ? 'bg-red' : 'bg-green'}`}>
                       {task.status === 'failed' ? 'No Realizada' : 'Realizada'}
@@ -312,6 +333,34 @@ function App() {
         </div>
       )}
 
+      {currentView === 'reminders' && (
+        <div className="task-list">
+          {reminders.length === 0 ? (
+            <div className="empty-state">
+              <Pin size={48} />
+              <h3>Sin recordatorios</h3>
+              <p>Añade notas personales aquí.</p>
+            </div>
+          ) : (
+            reminders.map(reminder => (
+              <div key={reminder.id} className="glass-panel task-card">
+                <div className="checkbox-wrapper" style={{ border: 'none', background: 'rgba(59, 130, 246, 0.2)' }}>
+                  <Pin className="checkbox-icon" style={{ opacity: 1, transform: 'scale(1)', color: '#3b82f6' }} />
+                </div>
+                
+                <div className="task-content">
+                  <span className="task-title" style={{ whiteSpace: 'pre-wrap' }}>{reminder.text}</span>
+                </div>
+                
+                <button className="delete-btn" onClick={() => deleteReminder(reminder.id)}>
+                  <Trash2 size={18} />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
       {currentView === 'staff' && (
         <div className="task-list">
           {staff.length === 0 ? (
@@ -343,29 +392,39 @@ function App() {
       {/* Dynamic FAB based on view */}
       <button 
         className="fab" 
-        style={{ display: (currentView === 'tasks' || currentView === 'staff') ? 'flex' : 'none' }}
-        onClick={() => currentView === 'tasks' ? setIsTaskModalOpen(true) : setIsStaffModalOpen(true)}
+        style={{ display: (currentView === 'tasks' || currentView === 'staff' || currentView === 'reminders') ? 'flex' : 'none' }}
+        onClick={() => {
+          if (currentView === 'tasks') setIsTaskModalOpen(true);
+          else if (currentView === 'staff') setIsStaffModalOpen(true);
+          else if (currentView === 'reminders') setIsReminderModalOpen(true);
+        }}
       >
-        {currentView === 'tasks' ? <Plus size={28} /> : <UserPlus size={28} />}
+        {currentView === 'tasks' && <Plus size={28} />}
+        {currentView === 'staff' && <UserPlus size={28} />}
+        {currentView === 'reminders' && <Plus size={28} />}
       </button>
 
       {/* Bottom Navigation Bar */}
-      <nav className="bottom-nav">
+      <nav className="bottom-nav" style={{ padding: '0 8px', justifyContent: 'space-between' }}>
         <button className={`nav-item ${currentView === 'tasks' ? 'active' : ''}`} onClick={() => setCurrentView('tasks')}>
-          <ListTodo size={24} />
-          <span>Pendientes</span>
+          <ListTodo size={20} />
+          <span style={{ fontSize: '10px' }}>Tareas</span>
         </button>
         <button className={`nav-item ${currentView === 'history' ? 'active' : ''}`} onClick={() => setCurrentView('history')}>
-          <History size={24} />
-          <span>Realizadas</span>
+          <History size={20} />
+          <span style={{ fontSize: '10px' }}>Realizadas</span>
         </button>
         <button className={`nav-item ${currentView === 'productivity' ? 'active' : ''}`} onClick={() => setCurrentView('productivity')}>
-          <TrendingUp size={24} />
-          <span>Rendimiento</span>
+          <TrendingUp size={20} />
+          <span style={{ fontSize: '10px' }}>Ranking</span>
+        </button>
+        <button className={`nav-item ${currentView === 'reminders' ? 'active' : ''}`} onClick={() => setCurrentView('reminders')}>
+          <Pin size={20} />
+          <span style={{ fontSize: '10px' }}>Notas</span>
         </button>
         <button className={`nav-item ${currentView === 'staff' ? 'active' : ''}`} onClick={() => setCurrentView('staff')}>
-          <Users size={24} />
-          <span>Personal</span>
+          <Users size={20} />
+          <span style={{ fontSize: '10px' }}>Personal</span>
         </button>
       </nav>
 
@@ -411,6 +470,37 @@ function App() {
                 disabled={!newTaskTitle.trim() || !newTaskAssignee || !newTaskDate}
               >
                 Añadir Tarea
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Reminder Modal */}
+      {isReminderModalOpen && (
+        <div className="modal-overlay" onClick={(e) => {
+          if (e.target.className === 'modal-overlay') setIsReminderModalOpen(false);
+        }}>
+          <div className="bottom-sheet">
+            <h2>Nuevo Recordatorio</h2>
+            <form onSubmit={addReminder}>
+              <div className="input-group">
+                <textarea
+                  className="input-field"
+                  placeholder="Escribe tu nota aquí..."
+                  value={newReminderText}
+                  onChange={(e) => setNewReminderText(e.target.value)}
+                  autoFocus
+                  rows="3"
+                  style={{ resize: 'none' }}
+                />
+              </div>
+              <button 
+                type="submit" 
+                className="btn-primary"
+                disabled={!newReminderText.trim()}
+              >
+                Guardar Nota
               </button>
             </form>
           </div>
