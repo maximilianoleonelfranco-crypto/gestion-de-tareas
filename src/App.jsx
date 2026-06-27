@@ -122,36 +122,70 @@ function App() {
     if (!file) return;
 
     setIsAnalyzingImage(true);
+    
     try {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64Data = reader.result;
-        
-        const response = await fetch('/api/analyze', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageBase64: base64Data })
-        });
-        
-        if (!response.ok) throw new Error('Error en API');
-        const data = await response.json();
-        
-        if (data.offers && data.offers.length > 0) {
-          for (const offer of data.offers) {
-            await addDoc(collection(db, 'offers'), {
-              ...offer,
-              createdAt: new Date().getTime()
-            });
+      // Comprimir la imagen usando Canvas antes de enviarla
+      const base64Data = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          
+          // Reducir a un máximo de 1200px para que Gemini pueda leer bien sin pesar mucho
+          const MAX_SIZE = 1200;
+          if (width > height && width > MAX_SIZE) {
+            height *= MAX_SIZE / width;
+            width = MAX_SIZE;
+          } else if (height > MAX_SIZE) {
+            width *= MAX_SIZE / height;
+            height = MAX_SIZE;
           }
-          alert(`¡Éxito! Se extrajeron ${data.offers.length} ofertas.`);
-        } else {
-          alert('No se detectaron ofertas claras en la imagen.');
+          
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          // Exportar a JPEG con 80% de calidad
+          resolve(canvas.toDataURL('image/jpeg', 0.8));
+        };
+        img.onerror = reject;
+        
+        const reader = new FileReader();
+        reader.onload = (e) => img.src = e.target.result;
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: base64Data })
+      });
+      
+      if (!response.ok) {
+        if (response.status === 413) throw new Error('La imagen es demasiado pesada.');
+        if (response.status === 504) throw new Error('La IA tardó demasiado en responder (Timeout).');
+        throw new Error('Error en los servidores de IA.');
+      }
+      
+      const data = await response.json();
+      
+      if (data.offers && data.offers.length > 0) {
+        for (const offer of data.offers) {
+          await addDoc(collection(db, 'offers'), {
+            ...offer,
+            createdAt: new Date().getTime()
+          });
         }
-      };
-      reader.readAsDataURL(file);
+        alert(`¡Éxito! Se extrajeron ${data.offers.length} ofertas.`);
+      } else {
+        alert('No se detectaron ofertas claras en la imagen.');
+      }
     } catch (error) {
       console.error(error);
-      alert('Hubo un error al procesar la foto con Inteligencia Artificial.');
+      alert(error.message || 'Hubo un error al procesar la foto con Inteligencia Artificial.');
     } finally {
       setIsAnalyzingImage(false);
       // Reset input
