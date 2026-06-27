@@ -15,8 +15,8 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'No image provided' });
     }
 
-    // Elegir el modelo de visión (usamos latest para evitar errores de 404)
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+    // Elegir el modelo de visión compatible con claves modernas (2026)
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     const prompt = `Analiza esta imagen y extrae todas las ofertas, precios o productos que encuentres. 
     Devuelve ÚNICAMENTE un array en formato JSON con la siguiente estructura, sin texto adicional antes o después:
