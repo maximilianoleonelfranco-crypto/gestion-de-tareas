@@ -16,7 +16,7 @@ export default async function handler(req, res) {
     }
 
     // Elegir el modelo de visión compatible con claves modernas (2026)
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    let model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     const prompt = `Analiza esta imagen y extrae todas las ofertas, precios o productos que encuentres. 
     Devuelve ÚNICAMENTE un array en formato JSON con la siguiente estructura, sin texto adicional antes o después:
@@ -39,7 +39,19 @@ export default async function handler(req, res) {
       }
     };
 
-    const result = await model.generateContent([prompt, image]);
+    let result;
+    try {
+      result = await model.generateContent([prompt, image]);
+    } catch (err) {
+      if (err.message && err.message.includes('503')) {
+        console.log("Gemini 2.5 is busy, falling back to Gemini 2.0...");
+        model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+        result = await model.generateContent([prompt, image]);
+      } else {
+        throw err;
+      }
+    }
+
     const response = await result.response;
     let text = response.text();
 
