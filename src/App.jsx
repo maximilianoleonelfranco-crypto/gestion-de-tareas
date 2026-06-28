@@ -8,12 +8,21 @@ import { collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, query, order
 function App() {
   const [currentView, setCurrentView] = useState('tasks'); // 'tasks', 'history', 'productivity', 'staff', 'reminders', 'offers'
   
-  // Tasks state
-  const [tasks, setTasks] = useState([]);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
+  const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
+  const [isOfferModalOpen, setIsOfferModalOpen] = useState(false);
+  
+  // Forms state
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskAssignee, setNewTaskAssignee] = useState('');
   const [newTaskDate, setNewTaskDate] = useState(new Date().toISOString().split('T')[0]);
+  
+  const [newStaffName, setNewStaffName] = useState('');
+  
+  const [newReminderText, setNewReminderText] = useState('');
+  
+  const [newOfferTitle, setNewOfferTitle] = useState('');
   
   // Completion Modal state
   const [isCompletionModalOpen, setIsCompletionModalOpen] = useState(false);
@@ -23,8 +32,6 @@ function App() {
 
   // Reminders state
   const [reminders, setReminders] = useState([]);
-  const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
-  const [newReminderText, setNewReminderText] = useState('');
 
   // Offers state
   const [offers, setOffers] = useState([]);
@@ -33,9 +40,10 @@ function App() {
 
   // Staff state
   const [staff, setStaff] = useState([]);
-  const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
-  const [newStaffName, setNewStaffName] = useState('');
   const [updateConfig, setUpdateConfig] = useState(null);
+
+  // Tasks state
+  const [tasks, setTasks] = useState([]);
 
   useEffect(() => {
     // Update Checker
@@ -183,6 +191,7 @@ function App() {
         for (const offer of data.offers) {
           await addDoc(collection(db, 'offers'), {
             ...offer,
+            groupTitle: newOfferTitle.trim() || 'Ofertas Sueltas',
             createdAt: new Date().getTime()
           });
         }
@@ -195,6 +204,7 @@ function App() {
       alert(error.message || 'Hubo un error al procesar la foto con Inteligencia Artificial.');
     } finally {
       setIsAnalyzingImage(false);
+      setIsOfferModalOpen(false);
       // Reset input
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
@@ -230,9 +240,8 @@ function App() {
       {/* Hidden input for camera */}
       <input 
         type="file" 
-        accept="image/*" 
-        capture="environment" 
         ref={fileInputRef} 
+        accept="image/*" 
         style={{ display: 'none' }} 
         onChange={handleImageCapture} 
       />
@@ -388,41 +397,48 @@ function App() {
         </div>
       )}
 
-      {currentView === 'offers' && (
-        <div className="task-list">
-          {offers.length === 0 ? (
-            <div className="empty-state">
-              <Camera size={48} />
-              <h3>Ninguna oferta escaneada</h3>
-              <p>Toma una foto de un documento para extraer datos.</p>
-            </div>
-          ) : (
-            offers.map(offer => (
-              <div key={offer.id} className="glass-panel task-card" style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', marginBottom: '8px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div className="checkbox-wrapper" style={{ border: 'none', background: 'rgba(16, 185, 129, 0.2)' }}>
-                      <Tag className="checkbox-icon" style={{ opacity: 1, transform: 'scale(1)', color: 'var(--success-color)' }} />
-                    </div>
-                    <span className="task-title" style={{ color: 'var(--success-color)' }}>{offer.productName || 'Oferta'}</span>
-                  </div>
-                  <button className="delete-btn" onClick={() => deleteOffer(offer.id)}><Trash2 size={18} /></button>
-                </div>
-                
-                <div className="task-content" style={{ width: '100%', paddingLeft: '40px' }}>
-                  <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '4px' }}>{offer.price}</div>
-                  {offer.details && (
-                    <div className="task-comment" style={{ marginTop: '4px' }}>
-                      <MessageSquare size={12} />
-                      {offer.details}
-                    </div>
-                  )}
-                </div>
+      {currentView === 'offers' && (() => {
+        const groupedOffers = offers.reduce((acc, offer) => {
+          const group = offer.groupTitle || 'Ofertas Sueltas';
+          if (!acc[group]) acc[group] = [];
+          acc[group].push(offer);
+          return acc;
+        }, {});
+        
+        return (
+          <div className="task-list">
+            {offers.length === 0 ? (
+              <div className="empty-state">
+                <Camera size={48} />
+                <h3>Ninguna oferta escaneada</h3>
+                <p>Toma una foto o sube un archivo para extraer datos.</p>
               </div>
-            ))
-          )}
-        </div>
-      )}
+            ) : (
+              Object.entries(groupedOffers).map(([groupName, groupOffers]) => (
+                <div key={groupName} className="offer-group">
+                  <h3 className="offer-group-title">{groupName}</h3>
+                  <div className="offer-group-list">
+                    {groupOffers.map(offer => (
+                      <div key={offer.id} className="offer-item">
+                        <div className="offer-item-details">
+                          <span className="offer-item-name">{offer.productName || 'Oferta'}</span>
+                          {offer.details && <span className="offer-item-cond">{offer.details}</span>}
+                        </div>
+                        <div className="offer-item-right">
+                          <span className="offer-item-price">{offer.price}</span>
+                          <button className="offer-delete-btn" onClick={() => deleteOffer(offer.id)}>
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        );
+      })()}
 
       {currentView === 'staff' && (
         <div className="task-list">
@@ -450,7 +466,10 @@ function App() {
           if (currentView === 'tasks') setIsTaskModalOpen(true);
           else if (currentView === 'staff') setIsStaffModalOpen(true);
           else if (currentView === 'reminders') setIsReminderModalOpen(true);
-          else if (currentView === 'offers' && fileInputRef.current) fileInputRef.current.click();
+          else if (currentView === 'offers') {
+            setNewOfferTitle('');
+            setIsOfferModalOpen(true);
+          }
         }}
       >
         {currentView === 'tasks' && <Plus size={28} />}
@@ -517,6 +536,24 @@ function App() {
               </div>
               <button type="submit" className="btn-primary" disabled={!newReminderText.trim()}>Guardar Nota</button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {isOfferModalOpen && (
+        <div className="modal-overlay" onClick={(e) => { if (e.target.className === 'modal-overlay') setIsOfferModalOpen(false); }}>
+          <div className="bottom-sheet">
+            <h2>Escanear Ofertas</h2>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '16px' }}>Agrupa estas ofertas bajo un título (ej. "Catálogo Vea")</p>
+            <div className="input-group">
+              <input type="text" className="input-field" placeholder="Título del grupo de ofertas" value={newOfferTitle} onChange={(e) => setNewOfferTitle(e.target.value)} autoFocus style={{ marginBottom: '16px' }} />
+            </div>
+            <button type="button" className="btn-primary" onClick={() => {
+              if (fileInputRef.current) fileInputRef.current.click();
+            }}>
+              <Camera size={20} style={{ marginRight: '8px' }} />
+              Seleccionar Imagen (Cámara o Galería)
+            </button>
           </div>
         </div>
       )}

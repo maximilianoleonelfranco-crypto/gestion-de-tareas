@@ -599,3 +599,80 @@ select.input-field option {
   color: var(--danger-color);
 }
 
+/* Offers Linear UI */
+.offer-group {
+  width: 100%;
+  margin-bottom: 24px;
+}
+
+.offer-group-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--surface-border);
+}
+
+.offer-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.offer-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--success-color);
+}
+
+.offer-item-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.offer-item-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.offer-item-cond {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.offer-item-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.offer-item-price {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--success-color);
+}
+
+.offer-delete-btn {
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.offer-delete-btn:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--danger-color);
+}
