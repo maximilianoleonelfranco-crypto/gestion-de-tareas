@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Check, Trash2, CheckCircle2, ListTodo, Users, UserPlus, Download, User, Calendar, History, TrendingUp, AlertCircle, MessageSquare, Pin, Camera, Tag, Loader2, Folder, ArrowLeft, Search, CalendarDays } from 'lucide-react';
+import { Plus, Check, Trash2, CheckCircle2, ListTodo, Users, UserPlus, Download, User, Calendar, History, TrendingUp, AlertCircle, MessageSquare, Pin, Camera, Tag, Loader2, Folder, ArrowLeft, Search, CalendarDays, Edit2 } from 'lucide-react';
 
 const APP_VERSION = 2;
 import { db } from './firebase';
-import { collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, query, orderBy } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, query, orderBy, writeBatch } from 'firebase/firestore';
 
 function App() {
   const [currentView, setCurrentView] = useState('tasks'); // 'tasks', 'history', 'productivity', 'staff', 'reminders', 'offers'
@@ -28,7 +28,13 @@ function App() {
   
   // Folders and Search state
   const [selectedOfferGroup, setSelectedOfferGroup] = useState(null);
-  const [offerSearchTerm, setOfferSearchTerm] = useState('');  
+  const [offerSearchTerm, setOfferSearchTerm] = useState('');
+  
+  // Edit state
+  const [editingTask, setEditingTask] = useState(null);
+  const [editingFolder, setEditingFolder] = useState(null);
+  const [editingOfferItem, setEditingOfferItem] = useState(null);
+  
   // Completion Modal state
   const [isCompletionModalOpen, setIsCompletionModalOpen] = useState(false);
   const [taskToComplete, setTaskToComplete] = useState(null);
@@ -116,6 +122,53 @@ function App() {
       });
     }
     setIsCompletionModalOpen(false); setTaskToComplete(null);
+  };
+
+  // --- Edit Logic ---
+  const submitEditTask = async (e) => {
+    e.preventDefault();
+    if (!editingTask || !editingTask.title.trim() || !editingTask.assignee || !editingTask.dueDate) return;
+    await updateDoc(doc(db, 'tasks', editingTask.id), {
+      title: editingTask.title.trim(),
+      assignee: editingTask.assignee,
+      dueDate: editingTask.dueDate
+    });
+    setEditingTask(null);
+  };
+
+  const submitEditFolder = async (e) => {
+    e.preventDefault();
+    if (!editingFolder || !editingFolder.groupTitle.trim()) return;
+    
+    // Update all items in this folder
+    const batch = writeBatch(db);
+    const itemsToUpdate = offers.filter(o => o.groupTitle === editingFolder.oldGroupTitle);
+    
+    itemsToUpdate.forEach(item => {
+      const itemRef = doc(db, 'offers', item.id);
+      batch.update(itemRef, {
+        groupTitle: editingFolder.groupTitle.trim(),
+        startDate: editingFolder.startDate || null,
+        endDate: editingFolder.endDate || null
+      });
+    });
+    
+    await batch.commit();
+    setEditingFolder(null);
+    if (selectedOfferGroup === editingFolder.oldGroupTitle) {
+      setSelectedOfferGroup(editingFolder.groupTitle.trim());
+    }
+  };
+
+  const submitEditOfferItem = async (e) => {
+    e.preventDefault();
+    if (!editingOfferItem || !editingOfferItem.productName.trim() || !editingOfferItem.price.trim()) return;
+    await updateDoc(doc(db, 'offers', editingOfferItem.id), {
+      productName: editingOfferItem.productName.trim(),
+      details: editingOfferItem.details?.trim() || '',
+      price: editingOfferItem.price.trim()
+    });
+    setEditingOfferItem(null);
   };
 
   // --- Reminders Logic ---
@@ -324,7 +377,10 @@ function App() {
                     {task.targetDate && <div className="task-badge bg-gray"><Calendar size={10} />{new Date(task.targetDate + 'T12:00:00Z').toLocaleDateString()}</div>}
                   </div>
                 </div>
-                <button className="delete-btn" onClick={() => deleteTask(task.id)}><Trash2 size={18} /></button>
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  <button className="edit-btn" onClick={() => setEditingTask(task)}><Edit2 size={18} /></button>
+                  <button className="delete-btn" onClick={() => deleteTask(task.id)}><Trash2 size={18} /></button>
+                </div>
               </div>
             ))
           )}
@@ -464,9 +520,14 @@ function App() {
                       </div>
                       <div className="offer-item-right">
                         <span className="offer-item-price">{offer.price}</span>
-                        <button className="offer-delete-btn" onClick={() => deleteOffer(offer.id)}>
-                          <Trash2 size={16} />
-                        </button>
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <button className="offer-edit-btn" onClick={() => setEditingOfferItem(offer)}>
+                            <Edit2 size={16} />
+                          </button>
+                          <button className="offer-delete-btn" onClick={() => deleteOffer(offer.id)}>
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))
@@ -502,6 +563,14 @@ function App() {
                           </div>
                         )}
                       </div>
+                    </div>
+                    <div className="folder-actions" style={{ marginLeft: 'auto', display: 'flex', gap: '4px', zIndex: 1 }} onClick={(e) => e.stopPropagation()}>
+                      <button className="edit-btn" onClick={() => setEditingFolder({
+                        oldGroupTitle: groupName,
+                        groupTitle: groupName,
+                        startDate: groupData.startDate || '',
+                        endDate: groupData.endDate || ''
+                      })}><Edit2 size={18} /></button>
                     </div>
                   </div>
                 ))}
@@ -679,6 +748,67 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* --- EDIT MODALS --- */}
+      {editingTask && (
+        <div className="modal-overlay" onClick={(e) => { if (e.target.className === 'modal-overlay') setEditingTask(null); }}>
+          <div className="bottom-sheet">
+            <h2>Editar Tarea</h2>
+            <form onSubmit={submitEditTask}>
+              <div className="input-group">
+                <input type="text" className="input-field" placeholder="¿Qué necesitas hacer?" value={editingTask.title} onChange={(e) => setEditingTask({...editingTask, title: e.target.value})} autoFocus style={{ marginBottom: '16px' }} />
+                <input type="date" className="input-field" value={editingTask.dueDate} onChange={(e) => setEditingTask({...editingTask, dueDate: e.target.value})} style={{ marginBottom: '16px' }} />
+                <select className="input-field select-field" value={editingTask.assignee} onChange={(e) => setEditingTask({...editingTask, assignee: e.target.value})}>
+                  <option value="" disabled>Selecciona un funcionario</option>
+                  {staff.map(person => <option key={person.id} value={person.name}>{person.name}</option>)}
+                </select>
+              </div>
+              <button type="submit" className="btn-primary" disabled={!editingTask.title.trim() || !editingTask.assignee || !editingTask.dueDate}>Guardar Cambios</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {editingFolder && (
+        <div className="modal-overlay" onClick={(e) => { if (e.target.className === 'modal-overlay') setEditingFolder(null); }}>
+          <div className="bottom-sheet">
+            <h2>Editar Carpeta</h2>
+            <form onSubmit={submitEditFolder}>
+              <div className="input-group">
+                <input type="text" className="input-field" placeholder="Título de la carpeta" value={editingFolder.groupTitle} onChange={(e) => setEditingFolder({...editingFolder, groupTitle: e.target.value})} autoFocus style={{ marginBottom: '16px' }} />
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>Desde (Opcional)</label>
+                    <input type="date" className="input-field" value={editingFolder.startDate} onChange={(e) => setEditingFolder({...editingFolder, startDate: e.target.value})} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>Hasta (Opcional)</label>
+                    <input type="date" className="input-field" value={editingFolder.endDate} onChange={(e) => setEditingFolder({...editingFolder, endDate: e.target.value})} />
+                  </div>
+                </div>
+              </div>
+              <button type="submit" className="btn-primary" disabled={!editingFolder.groupTitle.trim()}>Guardar Cambios</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {editingOfferItem && (
+        <div className="modal-overlay" onClick={(e) => { if (e.target.className === 'modal-overlay') setEditingOfferItem(null); }}>
+          <div className="bottom-sheet">
+            <h2>Editar Producto</h2>
+            <form onSubmit={submitEditOfferItem}>
+              <div className="input-group">
+                <input type="text" className="input-field" placeholder="Nombre del producto" value={editingOfferItem.productName} onChange={(e) => setEditingOfferItem({...editingOfferItem, productName: e.target.value})} autoFocus style={{ marginBottom: '16px' }} />
+                <input type="text" className="input-field" placeholder="Detalles (ej. 2x1)" value={editingOfferItem.details} onChange={(e) => setEditingOfferItem({...editingOfferItem, details: e.target.value})} style={{ marginBottom: '16px' }} />
+                <input type="text" className="input-field" placeholder="Precio (ej. $1000)" value={editingOfferItem.price} onChange={(e) => setEditingOfferItem({...editingOfferItem, price: e.target.value})} />
+              </div>
+              <button type="submit" className="btn-primary" disabled={!editingOfferItem.productName.trim() || !editingOfferItem.price.trim()}>Guardar Cambios</button>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
