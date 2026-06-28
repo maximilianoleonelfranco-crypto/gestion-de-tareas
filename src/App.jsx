@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Check, Trash2, CheckCircle2, ListTodo, Users, UserPlus, Download, User, Calendar, History, TrendingUp, AlertCircle, MessageSquare, Pin, Camera, Tag, Loader2 } from 'lucide-react';
+import { Plus, Check, Trash2, CheckCircle2, ListTodo, Users, UserPlus, Download, User, Calendar, History, TrendingUp, AlertCircle, MessageSquare, Pin, Camera, Tag, Loader2, Folder, ArrowLeft, Search, CalendarDays } from 'lucide-react';
 
 const APP_VERSION = 2;
 import { db } from './firebase';
@@ -23,7 +23,12 @@ function App() {
   const [newReminderText, setNewReminderText] = useState('');
   
   const [newOfferTitle, setNewOfferTitle] = useState('');
+  const [newOfferStartDate, setNewOfferStartDate] = useState('');
+  const [newOfferEndDate, setNewOfferEndDate] = useState('');
   
+  // Folders and Search state
+  const [selectedOfferGroup, setSelectedOfferGroup] = useState(null);
+  const [offerSearchTerm, setOfferSearchTerm] = useState('');  
   // Completion Modal state
   const [isCompletionModalOpen, setIsCompletionModalOpen] = useState(false);
   const [taskToComplete, setTaskToComplete] = useState(null);
@@ -192,6 +197,8 @@ function App() {
           await addDoc(collection(db, 'offers'), {
             ...offer,
             groupTitle: newOfferTitle.trim() || 'Ofertas Sueltas',
+            startDate: newOfferStartDate || null,
+            endDate: newOfferEndDate || null,
             createdAt: new Date().getTime()
           });
         }
@@ -400,11 +407,75 @@ function App() {
       {currentView === 'offers' && (() => {
         const groupedOffers = offers.reduce((acc, offer) => {
           const group = offer.groupTitle || 'Ofertas Sueltas';
-          if (!acc[group]) acc[group] = [];
-          acc[group].push(offer);
+          if (!acc[group]) {
+            acc[group] = {
+              items: [],
+              startDate: offer.startDate,
+              endDate: offer.endDate
+            };
+          }
+          acc[group].items.push(offer);
           return acc;
         }, {});
         
+        if (selectedOfferGroup) {
+          const groupData = groupedOffers[selectedOfferGroup];
+          if (!groupData) {
+            setSelectedOfferGroup(null);
+            return null;
+          }
+          
+          const filteredItems = groupData.items.filter(offer => 
+            (offer.productName || '').toLowerCase().includes(offerSearchTerm.toLowerCase()) || 
+            (offer.details || '').toLowerCase().includes(offerSearchTerm.toLowerCase())
+          );
+          
+          return (
+            <div className="task-list">
+              <div className="offer-group-header">
+                <button className="back-btn" onClick={() => { setSelectedOfferGroup(null); setOfferSearchTerm(''); }}>
+                  <ArrowLeft size={20} />
+                </button>
+                <h2 style={{ fontSize: '18px', margin: 0, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{selectedOfferGroup}</h2>
+              </div>
+              
+              <div className="search-bar-container">
+                <Search size={18} className="search-icon" />
+                <input 
+                  type="text" 
+                  className="search-input" 
+                  placeholder="Buscar producto..." 
+                  value={offerSearchTerm} 
+                  onChange={(e) => setOfferSearchTerm(e.target.value)}
+                />
+              </div>
+
+              <div className="offer-group-list" style={{ marginTop: '16px' }}>
+                {filteredItems.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
+                    No se encontraron productos.
+                  </div>
+                ) : (
+                  filteredItems.map(offer => (
+                    <div key={offer.id} className="offer-item">
+                      <div className="offer-item-details">
+                        <span className="offer-item-name">{offer.productName || 'Oferta'}</span>
+                        {offer.details && <span className="offer-item-cond">{offer.details}</span>}
+                      </div>
+                      <div className="offer-item-right">
+                        <span className="offer-item-price">{offer.price}</span>
+                        <button className="offer-delete-btn" onClick={() => deleteOffer(offer.id)}>
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          );
+        }
+
         return (
           <div className="task-list">
             {offers.length === 0 ? (
@@ -414,27 +485,27 @@ function App() {
                 <p>Toma una foto o sube un archivo para extraer datos.</p>
               </div>
             ) : (
-              Object.entries(groupedOffers).map(([groupName, groupOffers]) => (
-                <div key={groupName} className="offer-group">
-                  <h3 className="offer-group-title">{groupName}</h3>
-                  <div className="offer-group-list">
-                    {groupOffers.map(offer => (
-                      <div key={offer.id} className="offer-item">
-                        <div className="offer-item-details">
-                          <span className="offer-item-name">{offer.productName || 'Oferta'}</span>
-                          {offer.details && <span className="offer-item-cond">{offer.details}</span>}
-                        </div>
-                        <div className="offer-item-right">
-                          <span className="offer-item-price">{offer.price}</span>
-                          <button className="offer-delete-btn" onClick={() => deleteOffer(offer.id)}>
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
+              <div className="folders-grid">
+                {Object.entries(groupedOffers).map(([groupName, groupData]) => (
+                  <div key={groupName} className="glass-panel folder-card" onClick={() => setSelectedOfferGroup(groupName)}>
+                    <div className="folder-icon-wrapper">
+                      <Folder size={24} className="folder-icon" />
+                    </div>
+                    <div className="folder-content">
+                      <h3 className="folder-title">{groupName}</h3>
+                      <div className="folder-meta">
+                        <span>{groupData.items.length} productos</span>
+                        {(groupData.startDate || groupData.endDate) && (
+                          <div className="folder-dates">
+                            <CalendarDays size={12} />
+                            {groupData.startDate ? new Date(groupData.startDate + 'T12:00:00Z').toLocaleDateString() : '...'} al {groupData.endDate ? new Date(groupData.endDate + 'T12:00:00Z').toLocaleDateString() : '...'}
+                          </div>
+                        )}
                       </div>
-                    ))}
+                    </div>
                   </div>
-                </div>
-              ))
+                ))}
+              </div>
             )}
           </div>
         );
@@ -468,6 +539,8 @@ function App() {
           else if (currentView === 'reminders') setIsReminderModalOpen(true);
           else if (currentView === 'offers') {
             setNewOfferTitle('');
+            setNewOfferStartDate('');
+            setNewOfferEndDate('');
             setIsOfferModalOpen(true);
           }
         }}
@@ -547,6 +620,16 @@ function App() {
             <p style={{ color: 'var(--text-secondary)', marginBottom: '16px' }}>Agrupa estas ofertas bajo un título (ej. "Catálogo Vea")</p>
             <div className="input-group">
               <input type="text" className="input-field" placeholder="Título del grupo de ofertas" value={newOfferTitle} onChange={(e) => setNewOfferTitle(e.target.value)} autoFocus style={{ marginBottom: '16px' }} />
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>Desde (Opcional)</label>
+                  <input type="date" className="input-field" value={newOfferStartDate} onChange={(e) => setNewOfferStartDate(e.target.value)} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>Hasta (Opcional)</label>
+                  <input type="date" className="input-field" value={newOfferEndDate} onChange={(e) => setNewOfferEndDate(e.target.value)} />
+                </div>
+              </div>
             </div>
             <button type="button" className="btn-primary" onClick={() => {
               if (fileInputRef.current) fileInputRef.current.click();
