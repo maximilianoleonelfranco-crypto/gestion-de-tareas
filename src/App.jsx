@@ -1,814 +1,590 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Check, Trash2, CheckCircle2, ListTodo, Users, UserPlus, Download, User, Calendar, History, TrendingUp, AlertCircle, MessageSquare, Pin, Camera, Tag, Loader2, Folder, ArrowLeft, Search, CalendarDays, Edit2 } from 'lucide-react';
-
-const APP_VERSION = 2;
+import React, { useState, useRef, useCallback } from 'react';
+import { UploadCloud, Loader2, Save, FileText, CheckCircle2, AlertCircle, Eye, Trash2, Search } from 'lucide-react';
 import { db } from './firebase';
-import { collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, query, orderBy, writeBatch } from 'firebase/firestore';
+import { collection, addDoc, getDocs, query, orderBy, doc, deleteDoc, updateDoc } from 'firebase/firestore';
+import Schedule from './components/Schedule';
 
 function App() {
-  const [currentView, setCurrentView] = useState('tasks'); // 'tasks', 'history', 'productivity', 'staff', 'reminders', 'offers'
+  const [currentTab, setCurrentTab] = useState('offers'); // 'offers' | 'schedule'
+  const [step, setStep] = useState('upload'); // 'upload' | 'processing' | 'metadata' | 'editor' | 'success'
   
-  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
-  const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
-  const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
-  const [isOfferModalOpen, setIsOfferModalOpen] = useState(false);
-  
-  // Forms state
-  const [newTaskTitle, setNewTaskTitle] = useState('');
-  const [newTaskAssignee, setNewTaskAssignee] = useState('');
-  const [newTaskDate, setNewTaskDate] = useState(new Date().toISOString().split('T')[0]);
-  
-  const [newStaffName, setNewStaffName] = useState('');
-  
-  const [newReminderText, setNewReminderText] = useState('');
-  
-  const [newOfferTitle, setNewOfferTitle] = useState('');
-  const [newOfferStartDate, setNewOfferStartDate] = useState('');
-  const [newOfferEndDate, setNewOfferEndDate] = useState('');
-  
-  // Folders and Search state
-  const [selectedOfferGroup, setSelectedOfferGroup] = useState(null);
-  const [offerSearchTerm, setOfferSearchTerm] = useState('');
-  
-  // Edit state
-  const [editingTask, setEditingTask] = useState(null);
-  const [editingFolder, setEditingFolder] = useState(null);
-  const [editingOfferItem, setEditingOfferItem] = useState(null);
-  
-  // Completion Modal state
-  const [isCompletionModalOpen, setIsCompletionModalOpen] = useState(false);
-  const [taskToComplete, setTaskToComplete] = useState(null);
-  const [completionStatus, setCompletionStatus] = useState('success'); 
-  const [completionComment, setCompletionComment] = useState('');
-
-  // Reminders state
-  const [reminders, setReminders] = useState([]);
-
-  // Offers state
-  const [offers, setOffers] = useState([]);
-  const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
+  // File state
+  const [selectedFile, setSelectedFile] = useState(null);
   const fileInputRef = useRef(null);
+  const dropZoneRef = useRef(null);
+  const [isDragging, setIsDragging] = useState(false);
+  
+  // Metadata state
+  const [offerName, setOfferName] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  
+  // Table state
+  const [tableData, setTableData] = useState([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  // Dashboard state
+  const [savedOffers, setSavedOffers] = useState([]);
+  const [isLoadingOffers, setIsLoadingOffers] = useState(false);
+  const [currentOfferId, setCurrentOfferId] = useState(null); // Para saber si estamos editando o creando
 
-  // Staff state
-  const [staff, setStaff] = useState([]);
-  const [updateConfig, setUpdateConfig] = useState(null);
+  const loadOffers = async () => {
+    setIsLoadingOffers(true);
+    setStep('dashboard');
+    try {
+      const q = query(collection(db, 'catalogs'), orderBy('createdAt', 'desc'));
+      const querySnapshot = await getDocs(q);
+      const offers = [];
+      querySnapshot.forEach((doc) => {
+        offers.push({ id: doc.id, ...doc.data() });
+      });
+      setSavedOffers(offers);
+    } catch (error) {
+      console.error("Error loading offers: ", error);
+      alert("Hubo un error al cargar las ofertas.");
+    } finally {
+      setIsLoadingOffers(false);
+    }
+  };
 
-  // Tasks state
-  const [tasks, setTasks] = useState([]);
+  const deleteOffer = async (id) => {
+    if (!window.confirm("¿Estás seguro de que deseas eliminar esta oferta de forma permanente?")) return;
+    try {
+      await deleteDoc(doc(db, 'catalogs', id));
+      setSavedOffers(prev => prev.filter(offer => offer.id !== id));
+    } catch (error) {
+      console.error("Error al borrar:", error);
+      alert("No se pudo eliminar la oferta.");
+    }
+  };
 
-  useEffect(() => {
-    // Update Checker
-    const unsubscribeUpdate = onSnapshot(doc(db, 'settings', 'appConfig'), (snapshot) => {
-      if (snapshot.exists()) setUpdateConfig(snapshot.data());
-    });
+  const viewOffer = (offer) => {
+    setCurrentOfferId(offer.id);
+    setOfferName(offer.offerName);
+    setStartDate(offer.startDate);
+    setEndDate(offer.endDate);
+    setTableData(offer.items || []);
+    setSearchQuery('');
+    // Usamos el mismo editor para visualizar y poder editar
+    setStep('editor');
+  };
 
-    // Tasks
-    const qTasks = query(collection(db, 'tasks'), orderBy('createdAt', 'desc'));
-    const unsubscribeTasks = onSnapshot(qTasks, (snapshot) => {
-      setTasks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-
-    // Reminders
-    const qReminders = query(collection(db, 'reminders'), orderBy('createdAt', 'desc'));
-    const unsubscribeReminders = onSnapshot(qReminders, (snapshot) => {
-      setReminders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-
-    // Offers
-    const qOffers = query(collection(db, 'offers'), orderBy('createdAt', 'desc'));
-    const unsubscribeOffers = onSnapshot(qOffers, (snapshot) => {
-      setOffers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-
-    // Staff
-    const qStaff = query(collection(db, 'staff'), orderBy('createdAt', 'desc'));
-    const unsubscribeStaff = onSnapshot(qStaff, (snapshot) => {
-      setStaff(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-
-    return () => {
-      unsubscribeTasks();
-      unsubscribeStaff();
-      unsubscribeReminders();
-      unsubscribeOffers();
-      unsubscribeUpdate();
-    };
+  // --- Handlers ---
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    setIsDragging(true);
   }, []);
 
-  // --- Tasks Logic ---
-  const deleteTask = async (id) => await deleteDoc(doc(db, 'tasks', id));
-
-  const addTask = async (e) => {
+  const handleDragLeave = useCallback((e) => {
     e.preventDefault();
-    if (!newTaskTitle.trim() || !newTaskAssignee || !newTaskDate) return;
-    
-    await addDoc(collection(db, 'tasks'), { 
-      title: newTaskTitle, assignee: newTaskAssignee, targetDate: newTaskDate,
-      completed: false, status: 'pending', createdAt: new Date().getTime() 
-    });
-    setNewTaskTitle(''); setNewTaskAssignee(''); setIsTaskModalOpen(false);
-  };
+    setIsDragging(false);
+  }, []);
 
-  const openCompletionModal = (task) => {
-    setTaskToComplete(task); setCompletionStatus('success'); setCompletionComment(''); setIsCompletionModalOpen(true);
-  };
-
-  const submitCompletion = async (e) => {
+  const handleDrop = useCallback((e) => {
     e.preventDefault();
-    if (completionStatus === 'failed' && !completionComment.trim()) return;
-    if (taskToComplete) {
-      await updateDoc(doc(db, 'tasks', taskToComplete.id), { 
-        completed: true, status: completionStatus, comment: completionComment.trim()
-      });
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      processFile(e.dataTransfer.files[0]);
     }
-    setIsCompletionModalOpen(false); setTaskToComplete(null);
-  };
+  }, []);
 
-  // --- Edit Logic ---
-  const submitEditTask = async (e) => {
-    e.preventDefault();
-    if (!editingTask || !editingTask.title.trim() || !editingTask.assignee || !editingTask.dueDate) return;
-    await updateDoc(doc(db, 'tasks', editingTask.id), {
-      title: editingTask.title.trim(),
-      assignee: editingTask.assignee,
-      dueDate: editingTask.dueDate
-    });
-    setEditingTask(null);
-  };
-
-  const submitEditFolder = async (e) => {
-    e.preventDefault();
-    if (!editingFolder || !editingFolder.groupTitle.trim()) return;
-    
-    // Update all items in this folder
-    const batch = writeBatch(db);
-    const itemsToUpdate = offers.filter(o => o.groupTitle === editingFolder.oldGroupTitle);
-    
-    itemsToUpdate.forEach(item => {
-      const itemRef = doc(db, 'offers', item.id);
-      batch.update(itemRef, {
-        groupTitle: editingFolder.groupTitle.trim(),
-        startDate: editingFolder.startDate || null,
-        endDate: editingFolder.endDate || null
-      });
-    });
-    
-    await batch.commit();
-    setEditingFolder(null);
-    if (selectedOfferGroup === editingFolder.oldGroupTitle) {
-      setSelectedOfferGroup(editingFolder.groupTitle.trim());
+  const handleFileSelect = (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      processFile(e.target.files[0]);
     }
   };
 
-  const submitEditOfferItem = async (e) => {
-    e.preventDefault();
-    if (!editingOfferItem || !editingOfferItem.productName.trim() || !editingOfferItem.price.trim()) return;
-    await updateDoc(doc(db, 'offers', editingOfferItem.id), {
-      productName: editingOfferItem.productName.trim(),
-      details: editingOfferItem.details?.trim() || '',
-      price: editingOfferItem.price.trim()
-    });
-    setEditingOfferItem(null);
-  };
+  const fileToBase64 = (file) => {
+    return new Promise((resolve, reject) => {
+      // Si no es imagen, procesar normal (ej. PDF en el futuro)
+      if (!file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = error => reject(error);
+        reader.readAsDataURL(file);
+        return;
+      }
 
-  // --- Reminders Logic ---
-  const addReminder = async (e) => {
-    e.preventDefault();
-    if (!newReminderText.trim()) return;
-    await addDoc(collection(db, 'reminders'), { text: newReminderText, createdAt: new Date().getTime() });
-    setNewReminderText(''); setIsReminderModalOpen(false);
-  };
-  const deleteReminder = async (id) => await deleteDoc(doc(db, 'reminders', id));
-
-  // --- Offers Logic (AI) ---
-  const deleteOffer = async (id) => await deleteDoc(doc(db, 'offers', id));
-
-  const handleImageCapture = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    setIsAnalyzingImage(true);
-    
-    try {
-      // Comprimir la imagen usando Canvas antes de enviarla
-      const base64Data = await new Promise((resolve, reject) => {
+      // Optimización de velocidad: Comprimir imagen antes de enviarla a la IA
+      const reader = new FileReader();
+      reader.onload = (event) => {
         const img = new Image();
         img.onload = () => {
           const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 1200; // Reducir a max 1200px para acelerar la red
+          const scaleSize = MAX_WIDTH / img.width;
+          
           let width = img.width;
           let height = img.height;
-          
-          // Reducir a un máximo de 1200px para que Gemini pueda leer bien sin pesar mucho
-          const MAX_SIZE = 1200;
-          if (width > height && width > MAX_SIZE) {
-            height *= MAX_SIZE / width;
-            width = MAX_SIZE;
-          } else if (height > MAX_SIZE) {
-            width *= MAX_SIZE / height;
-            height = MAX_SIZE;
+
+          if (scaleSize < 1) {
+            width = MAX_WIDTH;
+            height = img.height * scaleSize;
           }
-          
+
           canvas.width = width;
           canvas.height = height;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, width, height);
           
-          // Exportar a JPEG con 80% de calidad
-          resolve(canvas.toDataURL('image/jpeg', 0.8));
+          // Comprimir en JPEG calidad 80% (acelera enormemente el upload)
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+          resolve(dataUrl.split(',')[1]);
         };
-        img.onerror = reject;
-        
-        const reader = new FileReader();
-        reader.onload = (e) => img.src = e.target.result;
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-      
-      const response = await fetch('/api/analyze', {
+        img.onerror = error => reject(error);
+        img.src = event.target.result;
+      };
+      reader.onerror = error => reject(error);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const processFile = async (file) => {
+    setSelectedFile(file);
+    setStep('processing');
+    
+    try {
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      if (!apiKey) {
+        alert("Error: Faltan credenciales de Gemini (VITE_GEMINI_API_KEY). Usando datos de prueba por defecto.");
+        // Fallback a datos de prueba si no hay API Key para que no se bloquee la app
+        setTableData([
+           { id: 1, proveedor: 'FALTA API', numeroProveedor: '', codigoProducto: '123', descripcion: 'Configura el .env', precioNormal: '0', precioOferta: '0' }
+        ]);
+        setStep('metadata');
+        return;
+      }
+
+      // 1. Convertir imagen a base64
+      const base64Data = await fileToBase64(file);
+      const mimeType = file.type;
+
+      // 2. Prompt estricto del usuario
+      const promptText = `Analiza la tabla de la imagen adjunta y extrae los datos fila por fila. Aplica las siguientes reglas de mapeo estrictas:
+Código de producto: Extraer de la 1ª columna (fondo rojo). Si contiene guiones o más de 6 caracteres, extrae solo los primeros 6 dígitos numéricos.   
+Número de proveedor: Extraer de la 2ª columna. Si la celda está vacía (como ocurre en varias filas), devuelve "".   
+Descripción del artículo: Extraer de la 3ª columna.   
+Proveedor: Debes DEDUCIRLO a partir de la 3ª columna. Extrae la marca que aparece en letras mayúsculas dentro de la descripción del producto (ejemplo: si dice 'Queso gouda CONAPROLE - kg', el proveedor es 'CONAPROLE'). Si no es evidente, devuelve "".   
+Precio normal: Extraer de la 4ª columna. Devuelve solo el valor numérico.   
+Precio de venta: Extraer de la 5ª columna. Devuelve solo el valor numérico.
+
+El LLM debe responder únicamente con un objeto JSON válido que contenga un array de objetos. Las claves deben ser exactamente: proveedor, numero_proveedor, codigo_producto, descripcion, precio_normal, precio_venta. No incluyas markdown, texto adicional ni explicaciones.`;
+
+      // 3. Petición a Gemini REST API
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: base64Data })
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: promptText },
+              { inlineData: { mimeType: mimeType, data: base64Data } }
+            ]
+          }],
+          generationConfig: {
+            responseMimeType: "application/json"
+          }
+        })
       });
-      
+
       if (!response.ok) {
-        let errorDetails = '';
-        try {
-          const errData = await response.json();
-          if (errData.details) errorDetails = errData.details;
-        } catch(e) {}
-        
-        if (errorDetails) throw new Error(`Error de IA: ${errorDetails}`);
-        if (response.status === 413) throw new Error('La imagen es demasiado pesada.');
-        if (response.status === 504) throw new Error('La IA tardó demasiado en responder (Timeout).');
-        throw new Error('Error en los servidores de IA.');
+        throw new Error(`Error en la API: ${response.status} ${response.statusText}`);
       }
-      
+
       const data = await response.json();
+      let responseText = data.candidates[0].content.parts[0].text;
       
-      if (data.offers && data.offers.length > 0) {
-        for (const offer of data.offers) {
-          await addDoc(collection(db, 'offers'), {
-            ...offer,
-            groupTitle: newOfferTitle.trim() || 'Ofertas Sueltas',
-            startDate: newOfferStartDate || null,
-            endDate: newOfferEndDate || null,
-            createdAt: new Date().getTime()
-          });
-        }
-        alert(`¡Éxito! Se extrajeron ${data.offers.length} ofertas.`);
+      // 4. Limpieza (por si el modelo incluye markdown a pesar de las restricciones)
+      responseText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+      
+      const parsedData = JSON.parse(responseText);
+      
+      // 5. Mapear el JSON al formato de la tabla del frontend
+      // El array devuelto puede ser directo o estar envuelto en un objeto { "ofertas": [...] }
+      let itemsArray = [];
+      if (Array.isArray(parsedData)) {
+        itemsArray = parsedData;
       } else {
-        alert('No se detectaron ofertas claras en la imagen.');
+        // Encontrar la primera propiedad que sea un array
+        const arrayKey = Object.keys(parsedData).find(key => Array.isArray(parsedData[key]));
+        if (arrayKey) itemsArray = parsedData[arrayKey];
+        else throw new Error("No se encontró un array en la respuesta JSON");
       }
+
+      const formattedData = itemsArray.map((item, index) => ({
+        id: index + 1,
+        proveedor: item.proveedor || "",
+        numeroProveedor: item.numero_proveedor || "",
+        codigoProducto: item.codigo_producto || "",
+        descripcion: item.descripcion || "",
+        precioNormal: item.precio_normal || "",
+        precioOferta: item.precio_venta || ""
+      }));
+
+      setTableData(formattedData);
+      setStep('metadata');
+      
     } catch (error) {
-      console.error(error);
-      alert(error.message || 'Hubo un error al procesar la foto con Inteligencia Artificial.');
-    } finally {
-      setIsAnalyzingImage(false);
-      setIsOfferModalOpen(false);
-      // Reset input
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      console.error("Error procesando con Gemini:", error);
+      alert("Error detallado: " + error.message + "\n\nPor favor, verifica la consola (F12) si necesitas más detalles.");
+      setStep('upload');
     }
   };
 
-  // --- Staff Logic ---
-  const deleteStaff = async (id) => await deleteDoc(doc(db, 'staff', id));
-
-  const addStaff = async (e) => {
+  const handleMetadataSubmit = (e) => {
     e.preventDefault();
-    if (!newStaffName.trim()) return;
-    await addDoc(collection(db, 'staff'), { name: newStaffName, createdAt: new Date().getTime() });
-    setNewStaffName(''); setIsStaffModalOpen(false);
+    if (!offerName.trim() || !startDate || !endDate) return;
+    setStep('editor');
   };
 
-  // --- Derived Data ---
-  const pendingTasks = tasks.filter(t => !t.completed);
-  const completedTasks = tasks.filter(t => t.completed);
-  const pendingCount = pendingTasks.length;
+  const handleCellChange = (id, field, value) => {
+    setTableData(prev => prev.map(row => 
+      row.id === id ? { ...row, [field]: value } : row
+    ));
+  };
 
-  const productivityRanking = staff.map(person => {
-    const personTasks = completedTasks.filter(t => t.assignee === person.name);
-    const total = personTasks.length;
-    const successful = personTasks.filter(t => t.status !== 'failed').length;
-    const percentage = total === 0 ? 0 : Math.round((successful / total) * 100);
-    return { ...person, total, successful, percentage };
-  }).sort((a, b) => b.percentage - a.percentage);
+  const validateCode = (code) => {
+    return code && code.length === 6 && /^\d+$/.test(code);
+  };
 
-  const needsUpdate = false; 
+  const saveToFirebase = async () => {
+    setIsSaving(true);
+    try {
+      // Validaciones estrictas removidas por solicitud del usuario
+      // Se permite guardar aunque falten datos o el código no tenga 6 dígitos
+
+      // Save to Firestore
+      const docData = {
+        offerName,
+        startDate,
+        endDate,
+        fileName: selectedFile?.name || 'Archivo desconocido',
+        items: tableData,
+        createdAt: new Date().toISOString()
+      };
+      
+      if (currentOfferId) {
+        // Actualizar existente
+        await updateDoc(doc(db, 'catalogs', currentOfferId), {
+          offerName, startDate, endDate, items: tableData
+        });
+      } else {
+        // Crear nuevo
+        await addDoc(collection(db, 'catalogs'), docData);
+      }
+      
+      setStep('success');
+    } catch (error) {
+      console.error("Error saving document: ", error);
+      alert("Hubo un error al guardar: " + error.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const resetApp = () => {
+    setOfferName('');
+    setStartDate('');
+    setEndDate('');
+    setTableData([]);
+    setSelectedFile(null);
+    setCurrentOfferId(null);
+    setSearchQuery('');
+    setStep('upload');
+  };
+
+  const filteredData = tableData.filter(row => {
+    if (!searchQuery) return true;
+    const queryLower = searchQuery.toLowerCase();
+    return Object.values(row).some(val => 
+      String(val).toLowerCase().includes(queryLower)
+    );
+  });
 
   return (
     <div className="app-container">
-      {/* Hidden input for camera */}
-      <input 
-        type="file" 
-        ref={fileInputRef} 
-        accept="image/*" 
-        style={{ display: 'none' }} 
-        onChange={handleImageCapture} 
-      />
-
-      {isAnalyzingImage && (
-        <div className="modal-overlay" style={{ zIndex: 9999 }}>
-          <div className="update-modal" style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}>
-            <Loader2 size={48} className="lucide-spin" style={{ color: '#3b82f6', margin: '0 auto', animation: 'spin 2s linear infinite' }} />
-            <h2 style={{ color: 'white', marginTop: '16px' }}>Analizando imagen con IA...</h2>
-            <p style={{ color: 'white' }}>Extrayendo ofertas y precios</p>
-          </div>
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <h1>Gestor de Ofertas IA</h1>
+          <p>Procesamiento inteligente de catálogos y promociones</p>
         </div>
-      )}
-
-      {/* Dynamic Header */}
-      <header className="header">
-        {currentView === 'tasks' && (
-          <>
-            <h1>Pendientes</h1>
-            <p>Tienes {pendingCount} {pendingCount === 1 ? 'tarea' : 'tareas'}</p>
-          </>
-        )}
-        {currentView === 'history' && (
-          <>
-            <h1>Historial</h1>
-            <p>Tareas finalizadas ({completedTasks.length})</p>
-          </>
-        )}
-        {currentView === 'productivity' && (
-          <>
-            <h1>Productividad</h1>
-            <p>Rendimiento del equipo</p>
-          </>
-        )}
-        {currentView === 'reminders' && (
-          <>
-            <h1>Mis Notas</h1>
-            <p>Recordatorios personales ({reminders.length})</p>
-          </>
-        )}
-        {currentView === 'offers' && (
-          <>
-            <h1>Escáner IA</h1>
-            <p>Ofertas extraídas ({offers.length})</p>
-          </>
-        )}
-        {currentView === 'staff' && (
-          <>
-            <h1>Personal</h1>
-            <p>Gestiona tu equipo</p>
-          </>
-        )}
-      </header>
-
-      {/* Main Content Area */}
-      {currentView === 'tasks' && (
-        <div className="task-list">
-          {pendingTasks.length === 0 ? (
-            <div className="empty-state">
-              <CheckCircle2 size={48} />
-              <h3>¡Todo al día!</h3>
-            </div>
-          ) : (
-            pendingTasks.map(task => (
-              <div key={task.id} className="glass-panel task-card">
-                <div className="checkbox-wrapper" onClick={() => openCompletionModal(task)}>
-                  <Check className="checkbox-icon" />
-                </div>
-                <div className="task-content">
-                  <span className="task-title">{task.title}</span>
-                  <div className="task-meta">
-                    {task.assignee && <div className="task-badge bg-blue"><User size={10} />{task.assignee}</div>}
-                    {task.targetDate && <div className="task-badge bg-gray"><Calendar size={10} />{new Date(task.targetDate + 'T12:00:00Z').toLocaleDateString()}</div>}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  <button className="edit-btn" onClick={() => setEditingTask(task)}><Edit2 size={18} /></button>
-                  <button className="delete-btn" onClick={() => deleteTask(task.id)}><Trash2 size={18} /></button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-
-      {currentView === 'history' && (
-        <div className="task-list">
-          {completedTasks.length === 0 ? (
-             <div className="empty-state"><History size={48} /><h3>Aún no hay historial</h3></div>
-          ) : (
-            completedTasks.map(task => (
-              <div key={task.id} className="glass-panel task-card completed">
-                <div className="checkbox-wrapper completed" style={{ background: task.status === 'failed' ? 'var(--danger-color)' : 'var(--success-color)' }}>
-                  {task.status === 'failed' ? <AlertCircle size={14} color="white" /> : <Check className="checkbox-icon" style={{ opacity: 1, transform: 'scale(1)' }} />}
-                </div>
-                <div className="task-content">
-                  <span className="task-title" style={{ textDecoration: 'none', color: task.status === 'failed' ? 'var(--text-primary)' : 'var(--success-color)' }}>{task.title}</span>
-                  <div className="task-meta">
-                    <div className={`task-badge ${task.status === 'failed' ? 'bg-red' : 'bg-green'}`}>
-                      {task.status === 'failed' ? 'No Realizada' : 'Realizada'}
-                    </div>
-                    {task.assignee && <div className="task-badge bg-blue"><User size={10} />{task.assignee}</div>}
-                  </div>
-                  {task.comment && <div className="task-comment"><MessageSquare size={12} />{task.comment}</div>}
-                </div>
-                <button className="delete-btn" onClick={() => deleteTask(task.id)}><Trash2 size={18} /></button>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-
-      {currentView === 'productivity' && (
-        <div className="task-list">
-          {productivityRanking.length === 0 ? (
-            <div className="empty-state"><TrendingUp size={48} /><h3>Sin datos</h3></div>
-          ) : (
-            productivityRanking.map((person, index) => (
-              <div key={person.id} className="glass-panel prod-card">
-                <div className="prod-header">
-                  <div className="prod-rank">#{index + 1}</div>
-                  <div className="prod-name">{person.name}</div>
-                  <div className="prod-percentage">{person.percentage}%</div>
-                </div>
-                <div className="prod-progress-bg">
-                  <div className="prod-progress-fill" style={{ width: `${person.percentage}%`, background: person.percentage >= 80 ? 'var(--success-color)' : person.percentage >= 50 ? '#eab308' : 'var(--danger-color)' }}></div>
-                </div>
-                <div className="prod-stats">
-                  <span>{person.successful} Éxitos</span>
-                  <span>{person.total - person.successful} Fallos</span>
-                  <span>{person.total} Totales</span>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-
-      {currentView === 'reminders' && (
-        <div className="task-list">
-          {reminders.length === 0 ? (
-            <div className="empty-state"><Pin size={48} /><h3>Sin recordatorios</h3></div>
-          ) : (
-            reminders.map(reminder => (
-              <div key={reminder.id} className="glass-panel task-card">
-                <div className="checkbox-wrapper" style={{ border: 'none', background: 'rgba(59, 130, 246, 0.2)' }}>
-                  <Pin className="checkbox-icon" style={{ opacity: 1, transform: 'scale(1)', color: '#3b82f6' }} />
-                </div>
-                <div className="task-content">
-                  <span className="task-title" style={{ whiteSpace: 'pre-wrap' }}>{reminder.text}</span>
-                </div>
-                <button className="delete-btn" onClick={() => deleteReminder(reminder.id)}><Trash2 size={18} /></button>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-
-      {currentView === 'offers' && (() => {
-        const groupedOffers = offers.reduce((acc, offer) => {
-          const group = offer.groupTitle || 'Ofertas Sueltas';
-          if (!acc[group]) {
-            acc[group] = {
-              items: [],
-              startDate: offer.startDate,
-              endDate: offer.endDate
-            };
-          }
-          acc[group].items.push(offer);
-          return acc;
-        }, {});
-        
-        if (selectedOfferGroup) {
-          const groupData = groupedOffers[selectedOfferGroup];
-          if (!groupData) {
-            setSelectedOfferGroup(null);
-            return null;
-          }
-          
-          const filteredItems = groupData.items.filter(offer => 
-            (offer.productName || '').toLowerCase().includes(offerSearchTerm.toLowerCase()) || 
-            (offer.details || '').toLowerCase().includes(offerSearchTerm.toLowerCase())
-          );
-          
-          return (
-            <div className="task-list">
-              <div className="offer-group-header">
-                <button className="back-btn" onClick={() => { setSelectedOfferGroup(null); setOfferSearchTerm(''); }}>
-                  <ArrowLeft size={20} />
-                </button>
-                <h2 style={{ fontSize: '18px', margin: 0, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{selectedOfferGroup}</h2>
-              </div>
-              
-              <div className="search-bar-container">
-                <Search size={18} className="search-icon" />
-                <input 
-                  type="text" 
-                  className="search-input" 
-                  placeholder="Buscar producto..." 
-                  value={offerSearchTerm} 
-                  onChange={(e) => setOfferSearchTerm(e.target.value)}
-                />
-              </div>
-
-              <div className="offer-group-list" style={{ marginTop: '16px' }}>
-                {filteredItems.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
-                    No se encontraron productos.
-                  </div>
-                ) : (
-                  filteredItems.map(offer => (
-                    <div key={offer.id} className="offer-item">
-                      <div className="offer-item-details">
-                        <span className="offer-item-name">{offer.productName || 'Oferta'}</span>
-                        {offer.details && <span className="offer-item-cond">{offer.details}</span>}
-                      </div>
-                      <div className="offer-item-right">
-                        <span className="offer-item-price">{offer.price}</span>
-                        <div style={{ display: 'flex', gap: '4px' }}>
-                          <button className="offer-edit-btn" onClick={() => setEditingOfferItem(offer)}>
-                            <Edit2 size={16} />
-                          </button>
-                          <button className="offer-delete-btn" onClick={() => deleteOffer(offer.id)}>
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          );
-        }
-
-        return (
-          <div className="task-list">
-            {offers.length === 0 ? (
-              <div className="empty-state">
-                <Camera size={48} />
-                <h3>Ninguna oferta escaneada</h3>
-                <p>Toma una foto o sube un archivo para extraer datos.</p>
-              </div>
-            ) : (
-              <div className="folders-grid">
-                {Object.entries(groupedOffers).map(([groupName, groupData]) => (
-                  <div key={groupName} className="glass-panel folder-card" onClick={() => setSelectedOfferGroup(groupName)}>
-                    <div className="folder-icon-wrapper">
-                      <Folder size={24} className="folder-icon" />
-                    </div>
-                    <div className="folder-content">
-                      <h3 className="folder-title">{groupName}</h3>
-                      <div className="folder-meta">
-                        <span>{groupData.items.length} productos</span>
-                        {(groupData.startDate || groupData.endDate) && (
-                          <div className="folder-dates">
-                            <CalendarDays size={12} />
-                            {groupData.startDate ? new Date(groupData.startDate + 'T12:00:00Z').toLocaleDateString() : '...'} al {groupData.endDate ? new Date(groupData.endDate + 'T12:00:00Z').toLocaleDateString() : '...'}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className="folder-actions" style={{ marginLeft: 'auto', display: 'flex', gap: '4px', zIndex: 1 }} onClick={(e) => e.stopPropagation()}>
-                      <button className="edit-btn" onClick={() => setEditingFolder({
-                        oldGroupTitle: groupName,
-                        groupTitle: groupName,
-                        startDate: groupData.startDate || '',
-                        endDate: groupData.endDate || ''
-                      })}><Edit2 size={18} /></button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })()}
-
-      {currentView === 'staff' && (
-        <div className="task-list">
-          {staff.length === 0 ? (
-            <div className="empty-state"><Users size={48} /><h3>Sin personal</h3></div>
-          ) : (
-            staff.map(person => (
-              <div key={person.id} className="glass-panel task-card">
-                <div className="checkbox-wrapper" style={{ border: 'none', background: 'rgba(59, 130, 246, 0.2)' }}>
-                  <Users className="checkbox-icon" style={{ opacity: 1, transform: 'scale(1)', color: '#3b82f6' }} />
-                </div>
-                <div className="task-content"><span className="task-title">{person.name}</span></div>
-                <button className="delete-btn" onClick={() => deleteStaff(person.id)}><Trash2 size={18} /></button>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-
-      {/* Dynamic FAB */}
-      <button 
-        className="fab" 
-        style={{ display: (currentView === 'tasks' || currentView === 'staff' || currentView === 'reminders' || currentView === 'offers') ? 'flex' : 'none' }}
-        onClick={() => {
-          if (currentView === 'tasks') setIsTaskModalOpen(true);
-          else if (currentView === 'staff') setIsStaffModalOpen(true);
-          else if (currentView === 'reminders') setIsReminderModalOpen(true);
-          else if (currentView === 'offers') {
-            setNewOfferTitle('');
-            setNewOfferStartDate('');
-            setNewOfferEndDate('');
-            setIsOfferModalOpen(true);
-          }
-        }}
-      >
-        {currentView === 'tasks' && <Plus size={28} />}
-        {currentView === 'staff' && <UserPlus size={28} />}
-        {currentView === 'reminders' && <Plus size={28} />}
-        {currentView === 'offers' && <Camera size={28} />}
-      </button>
-
-      {/* Bottom Navigation */}
-      <nav className="bottom-nav" style={{ padding: '0 4px', justifyContent: 'space-between', gap: '2px' }}>
-        <button className={`nav-item ${currentView === 'tasks' ? 'active' : ''}`} onClick={() => setCurrentView('tasks')} style={{ padding: '8px 2px' }}>
-          <ListTodo size={20} />
-          <span style={{ fontSize: '9px', marginTop: '2px' }}>Pendientes</span>
-        </button>
-        <button className={`nav-item ${currentView === 'history' ? 'active' : ''}`} onClick={() => setCurrentView('history')} style={{ padding: '8px 2px' }}>
-          <History size={20} />
-          <span style={{ fontSize: '9px', marginTop: '2px' }}>Realizadas</span>
-        </button>
-        <button className={`nav-item ${currentView === 'productivity' ? 'active' : ''}`} onClick={() => setCurrentView('productivity')} style={{ padding: '8px 2px' }}>
-          <TrendingUp size={20} />
-          <span style={{ fontSize: '9px', marginTop: '2px' }}>Ranking</span>
-        </button>
-        <button className={`nav-item ${currentView === 'reminders' ? 'active' : ''}`} onClick={() => setCurrentView('reminders')} style={{ padding: '8px 2px' }}>
-          <Pin size={20} />
-          <span style={{ fontSize: '9px', marginTop: '2px' }}>Notas</span>
-        </button>
-        <button className={`nav-item ${currentView === 'offers' ? 'active' : ''}`} onClick={() => setCurrentView('offers')} style={{ padding: '8px 2px' }}>
-          <Tag size={20} />
-          <span style={{ fontSize: '9px', marginTop: '2px' }}>Ofertas</span>
-        </button>
-        <button className={`nav-item ${currentView === 'staff' ? 'active' : ''}`} onClick={() => setCurrentView('staff')} style={{ padding: '8px 2px' }}>
-          <Users size={20} />
-          <span style={{ fontSize: '9px', marginTop: '2px' }}>Personal</span>
-        </button>
-      </nav>
-
-      {/* Modals... */}
-      {isTaskModalOpen && (
-        <div className="modal-overlay" onClick={(e) => { if (e.target.className === 'modal-overlay') setIsTaskModalOpen(false); }}>
-          <div className="bottom-sheet">
-            <h2>Nueva Tarea</h2>
-            <form onSubmit={addTask}>
-              <div className="input-group">
-                <input type="text" className="input-field" placeholder="¿Qué necesitas hacer?" value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} autoFocus style={{ marginBottom: '16px' }} />
-                <input type="date" className="input-field" value={newTaskDate} onChange={(e) => setNewTaskDate(e.target.value)} style={{ marginBottom: '16px' }} />
-                <select className="input-field select-field" value={newTaskAssignee} onChange={(e) => setNewTaskAssignee(e.target.value)}>
-                  <option value="" disabled>Selecciona un funcionario</option>
-                  {staff.map(person => <option key={person.id} value={person.name}>{person.name}</option>)}
-                </select>
-              </div>
-              <button type="submit" className="btn-primary" disabled={!newTaskTitle.trim() || !newTaskAssignee || !newTaskDate}>Añadir Tarea</button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {isReminderModalOpen && (
-        <div className="modal-overlay" onClick={(e) => { if (e.target.className === 'modal-overlay') setIsReminderModalOpen(false); }}>
-          <div className="bottom-sheet">
-            <h2>Nuevo Recordatorio</h2>
-            <form onSubmit={addReminder}>
-              <div className="input-group">
-                <textarea className="input-field" placeholder="Escribe tu nota aquí..." value={newReminderText} onChange={(e) => setNewReminderText(e.target.value)} autoFocus rows="3" style={{ resize: 'none' }} />
-              </div>
-              <button type="submit" className="btn-primary" disabled={!newReminderText.trim()}>Guardar Nota</button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {isOfferModalOpen && (
-        <div className="modal-overlay" onClick={(e) => { if (e.target.className === 'modal-overlay') setIsOfferModalOpen(false); }}>
-          <div className="bottom-sheet">
-            <h2>Escanear Ofertas</h2>
-            <p style={{ color: 'var(--text-secondary)', marginBottom: '16px' }}>Agrupa estas ofertas bajo un título (ej. "Catálogo Vea")</p>
-            <div className="input-group">
-              <input type="text" className="input-field" placeholder="Título del grupo de ofertas" value={newOfferTitle} onChange={(e) => setNewOfferTitle(e.target.value)} autoFocus style={{ marginBottom: '16px' }} />
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>Desde (Opcional)</label>
-                  <input type="date" className="input-field" value={newOfferStartDate} onChange={(e) => setNewOfferStartDate(e.target.value)} />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>Hasta (Opcional)</label>
-                  <input type="date" className="input-field" value={newOfferEndDate} onChange={(e) => setNewOfferEndDate(e.target.value)} />
-                </div>
-              </div>
-            </div>
-            <button type="button" className="btn-primary" onClick={() => {
-              if (fileInputRef.current) fileInputRef.current.click();
-            }}>
-              <Camera size={20} style={{ marginRight: '8px' }} />
-              Seleccionar Imagen (Cámara o Galería)
+        <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+          <div style={{ background: '#f1f5f9', padding: '4px', borderRadius: '8px', display: 'flex', gap: '4px' }}>
+            <button 
+              onClick={() => setCurrentTab('offers')}
+              style={{ background: currentTab === 'offers' ? 'white' : 'transparent', border: 'none', padding: '6px 16px', borderRadius: '4px', fontSize: '14px', fontWeight: '500', cursor: 'pointer', color: currentTab === 'offers' ? '#0f172a' : '#64748b', boxShadow: currentTab === 'offers' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
+            >
+              Ofertas
+            </button>
+            <button 
+              onClick={() => setCurrentTab('schedule')}
+              style={{ background: currentTab === 'schedule' ? 'white' : 'transparent', border: 'none', padding: '6px 16px', borderRadius: '4px', fontSize: '14px', fontWeight: '500', cursor: 'pointer', color: currentTab === 'schedule' ? '#0f172a' : '#64748b', boxShadow: currentTab === 'schedule' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
+            >
+              Agenda
             </button>
           </div>
+          {currentTab === 'offers' && (
+            step === 'dashboard' ? (
+              <button className="btn-primary" onClick={() => setStep('upload')}>
+                Nueva Oferta
+              </button>
+            ) : (
+              <button className="btn-secondary" onClick={loadOffers}>
+                <FileText size={16} /> Ver Ofertas
+              </button>
+            )
+          )}
+        </div>
+      </header>
+
+      {currentTab === 'schedule' ? (
+        <Schedule />
+      ) : (
+        <>
+          {/* STEP 1: UPLOAD */}
+      {step === 'upload' && (
+        <div 
+          className={`dropzone-container ${isDragging ? 'drag-active' : ''}`}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <UploadCloud size={48} className="dropzone-icon" />
+          <p className="dropzone-text">Haz clic o arrastra un archivo aquí</p>
+          <p className="dropzone-subtext">Soporta JPG, PNG, PDF, XLSX, DOCX</p>
+          <input 
+            type="file" 
+            ref={fileInputRef}
+            onChange={handleFileSelect}
+            style={{ display: 'none' }}
+            accept=".jpg,.jpeg,.png,.pdf,.xlsx,.docx"
+          />
         </div>
       )}
 
-      {isStaffModalOpen && (
-        <div className="modal-overlay" onClick={(e) => { if (e.target.className === 'modal-overlay') setIsStaffModalOpen(false); }}>
-          <div className="bottom-sheet">
-            <h2>Nuevo Miembro</h2>
-            <form onSubmit={addStaff}>
-              <div className="input-group">
-                <input type="text" className="input-field" placeholder="Nombre del empleado" value={newStaffName} onChange={(e) => setNewStaffName(e.target.value)} autoFocus />
-              </div>
-              <button type="submit" className="btn-primary" disabled={!newStaffName.trim()}>Añadir Personal</button>
-            </form>
-          </div>
+      {/* STEP 2: PROCESSING */}
+      {step === 'processing' && (
+        <div className="loading-container">
+          <Loader2 size={48} className="spinner" />
+          <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '8px' }}>Analizando documento...</h2>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>Extrayendo tablas, precios y proveedores mediante IA</p>
         </div>
       )}
 
-      {isCompletionModalOpen && (
-        <div className="modal-overlay" onClick={(e) => {
-          if (e.target.className === 'modal-overlay') { setIsCompletionModalOpen(false); setTaskToComplete(null); }
-        }}>
-          <div className="bottom-sheet">
-            <h2>Finalizar Tarea</h2>
-            <p style={{ color: 'var(--text-secondary)', marginBottom: '20px' }}>{taskToComplete?.title}</p>
-            <form onSubmit={submitCompletion}>
-              <div className="completion-toggle">
-                <button type="button" className={`toggle-btn ${completionStatus === 'success' ? 'active-success' : ''}`} onClick={() => setCompletionStatus('success')}>
-                  <CheckCircle2 size={20} /> Realizada
-                </button>
-                <button type="button" className={`toggle-btn ${completionStatus === 'failed' ? 'active-danger' : ''}`} onClick={() => setCompletionStatus('failed')}>
-                  <AlertCircle size={20} /> No Realizada
-                </button>
+      {/* STEP 3: METADATA MODAL */}
+      {step === 'metadata' && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <h2>Datos de la Oferta</h2>
+            <form onSubmit={handleMetadataSubmit}>
+              <div className="form-group">
+                <label className="form-label">Nombre de la oferta o catálogo</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  placeholder="Ej. Promociones Verano 2026"
+                  value={offerName}
+                  onChange={(e) => setOfferName(e.target.value)}
+                  autoFocus
+                />
               </div>
-              <div className="input-group">
-                <textarea className="input-field" placeholder={completionStatus === 'failed' ? 'Motivo (Obligatorio)...' : 'Comentarios (Opcional)...'} value={completionComment} onChange={(e) => setCompletionComment(e.target.value)} rows="3" style={{ resize: 'none', marginTop: '16px' }}></textarea>
-              </div>
-              <button type="submit" className="btn-primary" disabled={completionStatus === 'failed' && !completionComment.trim()}>Guardar Registro</button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* --- EDIT MODALS --- */}
-      {editingTask && (
-        <div className="modal-overlay" onClick={(e) => { if (e.target.className === 'modal-overlay') setEditingTask(null); }}>
-          <div className="bottom-sheet">
-            <h2>Editar Tarea</h2>
-            <form onSubmit={submitEditTask}>
-              <div className="input-group">
-                <input type="text" className="input-field" placeholder="¿Qué necesitas hacer?" value={editingTask.title} onChange={(e) => setEditingTask({...editingTask, title: e.target.value})} autoFocus style={{ marginBottom: '16px' }} />
-                <input type="date" className="input-field" value={editingTask.dueDate} onChange={(e) => setEditingTask({...editingTask, dueDate: e.target.value})} style={{ marginBottom: '16px' }} />
-                <select className="input-field select-field" value={editingTask.assignee} onChange={(e) => setEditingTask({...editingTask, assignee: e.target.value})}>
-                  <option value="" disabled>Selecciona un funcionario</option>
-                  {staff.map(person => <option key={person.id} value={person.name}>{person.name}</option>)}
-                </select>
-              </div>
-              <button type="submit" className="btn-primary" disabled={!editingTask.title.trim() || !editingTask.assignee || !editingTask.dueDate}>Guardar Cambios</button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {editingFolder && (
-        <div className="modal-overlay" onClick={(e) => { if (e.target.className === 'modal-overlay') setEditingFolder(null); }}>
-          <div className="bottom-sheet">
-            <h2>Editar Carpeta</h2>
-            <form onSubmit={submitEditFolder}>
-              <div className="input-group">
-                <input type="text" className="input-field" placeholder="Título de la carpeta" value={editingFolder.groupTitle} onChange={(e) => setEditingFolder({...editingFolder, groupTitle: e.target.value})} autoFocus style={{ marginBottom: '16px' }} />
-                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-                  <div style={{ flex: 1 }}>
-                    <label style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>Desde (Opcional)</label>
-                    <input type="date" className="input-field" value={editingFolder.startDate} onChange={(e) => setEditingFolder({...editingFolder, startDate: e.target.value})} />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <label style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>Hasta (Opcional)</label>
-                    <input type="date" className="input-field" value={editingFolder.endDate} onChange={(e) => setEditingFolder({...editingFolder, endDate: e.target.value})} />
-                  </div>
+              <div className="date-row form-group">
+                <div>
+                  <label className="form-label">Fecha de Inicio</label>
+                  <input 
+                    type="date" 
+                    className="form-input" 
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="form-label">Fecha de Fin</label>
+                  <input 
+                    type="date" 
+                    className="form-input" 
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                  />
                 </div>
               </div>
-              <button type="submit" className="btn-primary" disabled={!editingFolder.groupTitle.trim()}>Guardar Cambios</button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {editingOfferItem && (
-        <div className="modal-overlay" onClick={(e) => { if (e.target.className === 'modal-overlay') setEditingOfferItem(null); }}>
-          <div className="bottom-sheet">
-            <h2>Editar Producto</h2>
-            <form onSubmit={submitEditOfferItem}>
-              <div className="input-group">
-                <input type="text" className="input-field" placeholder="Nombre del producto" value={editingOfferItem.productName} onChange={(e) => setEditingOfferItem({...editingOfferItem, productName: e.target.value})} autoFocus style={{ marginBottom: '16px' }} />
-                <input type="text" className="input-field" placeholder="Detalles (ej. 2x1)" value={editingOfferItem.details} onChange={(e) => setEditingOfferItem({...editingOfferItem, details: e.target.value})} style={{ marginBottom: '16px' }} />
-                <input type="text" className="input-field" placeholder="Precio (ej. $1000)" value={editingOfferItem.price} onChange={(e) => setEditingOfferItem({...editingOfferItem, price: e.target.value})} />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '32px' }}>
+                <button type="submit" className="btn-primary" disabled={!offerName.trim() || !startDate || !endDate}>
+                  Continuar
+                </button>
               </div>
-              <button type="submit" className="btn-primary" disabled={!editingOfferItem.productName.trim() || !editingOfferItem.price.trim()}>Guardar Cambios</button>
             </form>
           </div>
         </div>
       )}
 
+      {/* STEP 4: EDITOR TABLE */}
+      {step === 'editor' && (
+        <div className="workspace-container">
+          <div className="workspace-header">
+            <div className="workspace-meta">
+              <h2>{offerName}</h2>
+              <p>Vigencia: {startDate} al {endDate} • {selectedFile?.name}</p>
+            </div>
+            <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+              <div style={{ position: 'relative' }}>
+                <Search size={16} style={{ position: 'absolute', left: '12px', top: '10px', color: '#94a3b8' }} />
+                <input 
+                  type="text" 
+                  placeholder="Buscar producto, marca..." 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  style={{ padding: '8px 12px 8px 36px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px', width: '250px' }}
+                />
+              </div>
+              <button className="btn-primary btn-sage" onClick={saveToFirebase} disabled={isSaving}>
+                {isSaving ? <Loader2 size={16} className="spinner" style={{margin:0, animation: 'spin 1s linear infinite'}} /> : <Save size={16} />}
+                Guardar Datos
+              </button>
+            </div>
+          </div>
+          
+          <div className="table-wrapper">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th style={{ width: '40px', textAlign: 'center' }}>N°</th>
+                  <th style={{ width: '15%' }}>Proveedor</th>
+                  <th style={{ width: '10%' }}>N° Proveedor</th>
+                  <th style={{ width: '12%' }}>Código (6 dígitos)</th>
+                  <th style={{ width: 'auto', minWidth: '300px' }}>Descripción</th>
+                  <th style={{ width: '10%' }}>Precio Normal</th>
+                  <th style={{ width: '10%' }}>Precio Oferta</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredData.map((row, index) => (
+                  <tr key={row.id}>
+                    <td style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: '500' }}>
+                      {index + 1}
+                    </td>
+                    <td>
+                      <input 
+                        type="text" 
+                        className="table-input"
+                        value={row.proveedor} 
+                        onChange={(e) => handleCellChange(row.id, 'proveedor', e.target.value)}
+                        placeholder="Opcional"
+                      />
+                    </td>
+                    <td>
+                      <input 
+                        type="text" 
+                        className="table-input"
+                        value={row.numeroProveedor} 
+                        onChange={(e) => handleCellChange(row.id, 'numeroProveedor', e.target.value)}
+                        placeholder="Opcional"
+                      />
+                    </td>
+                    <td>
+                      <input 
+                        type="text" 
+                        className="table-input"
+                        value={row.codigoProducto} 
+                        onChange={(e) => handleCellChange(row.id, 'codigoProducto', e.target.value)}
+                        placeholder="000000"
+                        maxLength={6}
+                      />
+                    </td>
+                    <td>
+                      <input 
+                        type="text" 
+                        className="table-input"
+                        value={row.descripcion} 
+                        onChange={(e) => handleCellChange(row.id, 'descripcion', e.target.value)}
+                        placeholder="Opcional"
+                      />
+                    </td>
+                    <td>
+                      <input 
+                        type="text" 
+                        className="table-input"
+                        value={row.precioNormal} 
+                        onChange={(e) => handleCellChange(row.id, 'precioNormal', e.target.value)}
+                        placeholder="$0.00"
+                      />
+                    </td>
+                    <td>
+                      <input 
+                        type="text" 
+                        className="table-input"
+                        value={row.precioOferta} 
+                        onChange={(e) => handleCellChange(row.id, 'precioOferta', e.target.value)}
+                        placeholder="$0.00"
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 5: SUCCESS */}
+      {step === 'success' && (
+        <div className="loading-container" style={{ textAlign: 'center' }}>
+          <CheckCircle2 size={64} style={{ color: 'var(--accent-sage)', marginBottom: '16px' }} />
+          <h2 style={{ fontSize: '24px', fontWeight: '600', marginBottom: '8px' }}>¡Catálogo guardado!</h2>
+          <p style={{ color: 'var(--text-secondary)', marginBottom: '24px' }}>Los datos se han sincronizado correctamente en la base de datos.</p>
+          <button className="btn-primary" onClick={resetApp}>Subir otro archivo</button>
+        </div>
+      )}
+
+      {/* STEP 6: DASHBOARD */}
+      {step === 'dashboard' && (
+        <div className="workspace-container" style={{ maxWidth: '800px', margin: '0 auto', background: 'transparent', boxShadow: 'none' }}>
+          <h2 style={{ marginBottom: '24px', fontSize: '20px' }}>Tus Ofertas Guardadas</h2>
+          
+          {isLoadingOffers ? (
+            <div className="loading-container">
+              <Loader2 size={32} className="spinner" style={{ animation: 'spin 1s linear infinite' }} />
+              <p>Cargando ofertas...</p>
+            </div>
+          ) : savedOffers.length === 0 ? (
+            <div className="empty-state" style={{ textAlign: 'center', padding: '48px', background: 'white', borderRadius: '12px' }}>
+              <p style={{ color: 'var(--text-secondary)' }}>Aún no has guardado ninguna oferta.</p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {savedOffers.map(offer => (
+                <div key={offer.id} style={{ background: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '4px' }}>{offer.offerName}</h3>
+                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Vigencia: {offer.startDate} al {offer.endDate}</p>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <span style={{ display: 'inline-block', background: '#e2e8f0', color: '#475569', padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '600' }}>
+                      {offer.items?.length || 0} ítems
+                    </span>
+                    <button 
+                      onClick={() => viewOffer(offer)}
+                      style={{ background: 'transparent', border: 'none', color: 'var(--accent-slate)', cursor: 'pointer', padding: '8px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '14px', fontWeight: '500' }}
+                    >
+                      <Eye size={18} /> Ver
+                    </button>
+                    <button 
+                      onClick={() => deleteOffer(offer.id)}
+                      style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '8px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '14px', fontWeight: '500' }}
+                    >
+                      <Trash2 size={18} /> Borrar
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+        </>
+      )}
     </div>
   );
 }
