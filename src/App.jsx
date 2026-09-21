@@ -172,7 +172,7 @@ Precio de venta: Extraer de la 5ª columna. Devuelve solo el valor numérico.
 El LLM debe responder únicamente con un objeto JSON válido que contenga un array de objetos. Las claves deben ser exactamente: proveedor, numero_proveedor, codigo_producto, descripcion, precio_normal, precio_venta. No incluyas markdown, texto adicional ni explicaciones.`;
 
       // 3. Petición a Gemini REST API
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
