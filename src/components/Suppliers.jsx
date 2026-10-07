@@ -1,16 +1,19 @@
 import { useState, useEffect } from 'react';
 import { collection, setDoc, getDocs, doc, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Trash2 } from 'lucide-react';
+import { Trash2, Building2, Plus, UsersRound } from 'lucide-react';
 
 export default function Suppliers() {
   const [suppliers, setSuppliers] = useState([]);
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
 
   const fetchSuppliers = async () => {
+    setIsLoading(true);
     const snapshot = await getDocs(collection(db, 'suppliers'));
     setSuppliers(snapshot.docs.map(d => ({ codigo_proveedor: d.id, ...d.data() })));
+    setIsLoading(false);
   };
 
   useEffect(() => {
@@ -20,7 +23,6 @@ export default function Suppliers() {
   const handleAdd = async (e) => {
     e.preventDefault();
     if (!code.trim() || !name.trim()) return;
-    // Usamos el código de proveedor como ID del documento (Primary Key)
     await setDoc(doc(db, 'suppliers', code.trim()), {
       nombre: name.trim()
     });
@@ -35,65 +37,120 @@ export default function Suppliers() {
   };
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <h2 className="text-2xl font-bold mb-6 text-slate-800">Maestro de Proveedores</h2>
+    <div className="max-w-5xl mx-auto space-y-8">
       
-      <form onSubmit={handleAdd} className="flex gap-4 mb-8 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-        <div className="flex-1">
-          <label className="block text-sm font-medium text-slate-700 mb-1">Código</label>
-          <input 
-            type="text" 
-            value={code}
-            onChange={e => setCode(e.target.value)}
-            placeholder="Ej: 12018" 
-            className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-          />
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200/60 p-8 flex flex-col md:flex-row gap-6 justify-between items-center">
+        <div>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2.5 bg-indigo-100 text-indigo-600 rounded-xl">
+              <UsersRound size={24} />
+            </div>
+            <h2 className="text-3xl font-bold text-slate-800 tracking-tight">Maestro de Proveedores</h2>
+          </div>
+          <p className="text-slate-500">Administra el catálogo central de proveedores del sistema.</p>
         </div>
-        <div className="flex-[2]">
-          <label className="block text-sm font-medium text-slate-700 mb-1">Nombre</label>
-          <input 
-            type="text" 
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="Ej: Conaprole" 
-            className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-          />
+        <div className="bg-slate-50 px-6 py-4 rounded-2xl ring-1 ring-slate-100 flex flex-col items-center justify-center">
+          <span className="text-3xl font-bold text-indigo-600">{suppliers.length}</span>
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Registrados</span>
         </div>
-        <div className="flex items-end">
-          <button type="submit" className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition h-[42px]">
-            Guardar
-          </button>
-        </div>
-      </form>
+      </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <table className="w-full text-left">
-          <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 text-sm">
-            <tr>
-              <th className="p-4 font-semibold">Código</th>
-              <th className="p-4 font-semibold">Nombre</th>
-              <th className="p-4 font-semibold w-16"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {suppliers.map(s => (
-              <tr key={s.codigo_proveedor} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
-                <td className="p-4 text-slate-800 font-mono">{s.codigo_proveedor}</td>
-                <td className="p-4 text-slate-800">{s.nombre}</td>
-                <td className="p-4 text-center">
-                  <button onClick={() => deleteSupplier(s.codigo_proveedor)} className="text-red-400 hover:text-red-600">
-                    <Trash2 size={18} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {suppliers.length === 0 && (
-              <tr>
-                <td colSpan="3" className="p-8 text-center text-slate-500">No hay proveedores registrados.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        
+        {/* Form Column */}
+        <div className="lg:col-span-1">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200/60 p-6 sticky top-8">
+            <div className="flex items-center gap-2 mb-6 pb-4 border-b border-slate-100">
+              <Building2 size={20} className="text-indigo-500" />
+              <h3 className="font-semibold text-slate-800 text-lg">Nuevo Proveedor</h3>
+            </div>
+            
+            <form onSubmit={handleAdd} className="space-y-5">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Código Único</label>
+                <input 
+                  type="text" 
+                  value={code}
+                  onChange={e => setCode(e.target.value)}
+                  placeholder="Ej: 12018" 
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 focus:bg-white outline-none transition-all duration-200 font-mono text-slate-700"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Nombre / Razón Social</label>
+                <input 
+                  type="text" 
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  placeholder="Ej: Conaprole S.A." 
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 focus:bg-white outline-none transition-all duration-200 text-slate-700"
+                />
+              </div>
+              <button 
+                type="submit" 
+                disabled={!code.trim() || !name.trim()}
+                className="w-full bg-indigo-600 text-white px-6 py-3.5 rounded-xl hover:bg-indigo-700 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 flex items-center justify-center gap-2 font-semibold shadow-sm shadow-indigo-200 disabled:opacity-50 disabled:hover:scale-100 mt-2"
+              >
+                <Plus size={20} />
+                Guardar Proveedor
+              </button>
+            </form>
+          </div>
+        </div>
+
+        {/* Table Column */}
+        <div className="lg:col-span-2">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200/60 overflow-hidden flex flex-col h-full min-h-[500px]">
+            <div className="overflow-x-auto flex-1">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-slate-50/80 backdrop-blur-md sticky top-0 z-10 border-b border-slate-200/80">
+                  <tr>
+                    <th className="p-5 font-semibold text-slate-600 text-sm tracking-wide">Código</th>
+                    <th className="p-5 font-semibold text-slate-600 text-sm tracking-wide">Nombre del Proveedor</th>
+                    <th className="p-5 font-semibold text-slate-600 text-sm tracking-wide w-16 text-center">Acción</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {isLoading ? (
+                    <tr>
+                      <td colSpan="3" className="p-12 text-center">
+                        <div className="inline-block w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
+                      </td>
+                    </tr>
+                  ) : suppliers.length === 0 ? (
+                    <tr>
+                      <td colSpan="3" className="p-16 text-center text-slate-400">
+                        <Building2 size={48} className="mx-auto mb-4 text-slate-300 opacity-50" />
+                        <p className="text-lg font-medium text-slate-600">Base de datos vacía</p>
+                        <p className="text-sm">Ingresa tu primer proveedor en el formulario.</p>
+                      </td>
+                    </tr>
+                  ) : (
+                    suppliers.map(s => (
+                      <tr key={s.codigo_proveedor} className="group transition-colors duration-200 hover:bg-indigo-50/30">
+                        <td className="p-5">
+                          <span className="font-mono text-sm font-medium bg-slate-100 text-slate-600 px-2.5 py-1 rounded-md border border-slate-200/60">
+                            {s.codigo_proveedor}
+                          </span>
+                        </td>
+                        <td className="p-5 text-slate-700 font-medium">{s.nombre}</td>
+                        <td className="p-5 text-center">
+                          <button 
+                            onClick={() => deleteSupplier(s.codigo_proveedor)} 
+                            className="text-slate-400 hover:text-red-500 p-2 rounded-xl hover:bg-red-50 transition-all duration-200 hover:scale-110 active:scale-95 mx-auto block"
+                            title="Eliminar proveedor"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

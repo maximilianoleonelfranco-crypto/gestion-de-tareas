@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { collection, addDoc, getDocs, doc, deleteDoc, getDoc, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Trash2, Search, ArrowLeft, Plus } from 'lucide-react';
+import { Trash2, Search, ArrowLeft, Plus, Tags, Calendar, Box, Activity } from 'lucide-react';
 
 export default function Offers() {
   const [offers, setOffers] = useState([]);
@@ -9,6 +9,7 @@ export default function Offers() {
   const [items, setItems] = useState([]);
   const [globalSearch, setGlobalSearch] = useState('');
   const [searchResults, setSearchResults] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
   
   // States for new offer
   const [newOfferName, setNewOfferName] = useState('');
@@ -22,8 +23,10 @@ export default function Offers() {
   const [providerNamePreview, setProviderNamePreview] = useState('');
 
   const fetchOffers = async () => {
+    setIsLoading(true);
     const snapshot = await getDocs(collection(db, 'offers'));
     setOffers(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    setIsLoading(false);
   };
 
   useEffect(() => {
@@ -103,11 +106,11 @@ export default function Offers() {
       setSearchResults(null);
       return;
     }
+    setIsLoading(true);
     const term = globalSearch.toLowerCase();
     const itemsSnap = await getDocs(collection(db, 'offer_items'));
     const allItems = itemsSnap.docs.map(d => d.data());
     
-    // Filtro dinámico: descripcion, codigo de articulo, codigo proveedor, nombre proveedor
     const filtered = allItems.filter(item => 
       (item.descripcion || '').toLowerCase().includes(term) ||
       (item.codigo_articulo || '').toLowerCase().includes(term) ||
@@ -115,7 +118,6 @@ export default function Offers() {
       (item.nombre_proveedor || '').toLowerCase().includes(term)
     );
 
-    // Agrupar por Oferta
     const grouped = {};
     filtered.forEach(item => {
       if (!grouped[item.offer_id]) {
@@ -129,159 +131,308 @@ export default function Offers() {
     });
 
     setSearchResults(grouped);
+    setIsLoading(false);
+  };
+
+  // Helper to determine offer status badge
+  const getOfferStatus = (end) => {
+    if (!end) return { text: 'Sin fecha', classes: 'bg-slate-100 text-slate-600 border-slate-200' };
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    const [year, month, day] = end.split('-');
+    const endDate = new Date(year, month - 1, day);
+    if (endDate >= today) return { text: 'Activa', classes: 'bg-emerald-100 text-emerald-700 border-emerald-200' };
+    return { text: 'Vencida', classes: 'bg-red-100 text-red-700 border-red-200' };
   };
 
   if (selectedOffer) {
     return (
-      <div className="p-6 max-w-5xl mx-auto">
-        <button onClick={() => setSelectedOffer(null)} className="flex items-center gap-2 text-indigo-600 mb-6 hover:underline">
-          <ArrowLeft size={18} /> Volver a Ofertas
+      <div className="max-w-6xl mx-auto space-y-6 animate-in slide-in-from-right-8 duration-300">
+        
+        <button 
+          onClick={() => setSelectedOffer(null)} 
+          className="flex items-center gap-2 text-slate-500 hover:text-indigo-600 transition-colors font-medium px-2 py-1 rounded-lg hover:bg-indigo-50 w-fit"
+        >
+          <ArrowLeft size={18} /> Volver al panel de ofertas
         </button>
         
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-8">
-          <h2 className="text-2xl font-bold text-slate-800">{selectedOffer.nombre_oferta}</h2>
-          <p className="text-slate-500">Vigencia: {selectedOffer.vigencia_inicio} a {selectedOffer.vigencia_fin}</p>
+        <div className="bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-2xl shadow-md p-8 text-white relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-64 h-64 bg-white opacity-5 rounded-full -translate-y-1/2 translate-x-1/3"></div>
+          <div className="relative z-10">
+            <div className="flex items-center gap-3 mb-3">
+              <span className="bg-white/20 p-2 rounded-xl backdrop-blur-sm"><Tags size={24} /></span>
+              <h2 className="text-3xl font-bold tracking-tight">{selectedOffer.nombre_oferta}</h2>
+            </div>
+            <div className="flex items-center gap-6 text-indigo-100 mt-6">
+              <div className="flex items-center gap-2 bg-black/10 px-4 py-2 rounded-lg backdrop-blur-sm">
+                <Calendar size={18} />
+                <span><span className="opacity-70">Inicio:</span> {selectedOffer.vigencia_inicio || 'N/A'}</span>
+              </div>
+              <div className="flex items-center gap-2 bg-black/10 px-4 py-2 rounded-lg backdrop-blur-sm">
+                <Calendar size={18} />
+                <span><span className="opacity-70">Fin:</span> {selectedOffer.vigencia_fin || 'N/A'}</span>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <form onSubmit={handleAddItem} className="flex gap-4 mb-8 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <div className="flex-1">
-            <label className="block text-sm font-medium text-slate-700 mb-1">Cód. Artículo</label>
-            <input type="text" value={newItemCode} onChange={e => setNewItemCode(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500" required />
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          <div className="lg:col-span-1">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200/60 p-6 sticky top-8">
+              <div className="flex items-center gap-2 mb-6 pb-4 border-b border-slate-100">
+                <Box size={20} className="text-indigo-500" />
+                <h3 className="font-semibold text-slate-800 text-lg">Añadir Artículo</h3>
+              </div>
+              
+              <form onSubmit={handleAddItem} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Código de Artículo</label>
+                  <input type="text" value={newItemCode} onChange={e => setNewItemCode(e.target.value)} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/50 outline-none font-mono text-sm" required />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Descripción</label>
+                  <input type="text" value={newItemDesc} onChange={e => setNewItemDesc(e.target.value)} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/50 outline-none" required />
+                </div>
+                <div className="pt-2 border-t border-slate-100 mt-2">
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Código de Proveedor <span className="text-slate-400 font-normal">(Opcional)</span></label>
+                  <input type="text" value={newProviderCode} onChange={e => handleProviderCodeChange(e.target.value)} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/50 outline-none font-mono text-sm" />
+                  {providerNamePreview && (
+                    <div className={`mt-2 p-2 rounded-lg text-xs font-medium border ${providerNamePreview === 'No encontrado' ? 'bg-red-50 text-red-600 border-red-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'}`}>
+                      {providerNamePreview === 'No encontrado' ? 'Proveedor no registrado' : `✓ ${providerNamePreview}`}
+                    </div>
+                  )}
+                </div>
+                <button type="submit" className="w-full bg-slate-800 text-white px-6 py-3 rounded-xl hover:bg-slate-900 transition-all duration-200 flex items-center justify-center gap-2 font-medium mt-4">
+                  <Plus size={18} /> Agregar a la oferta
+                </button>
+              </form>
+            </div>
           </div>
-          <div className="flex-[2]">
-            <label className="block text-sm font-medium text-slate-700 mb-1">Descripción</label>
-            <input type="text" value={newItemDesc} onChange={e => setNewItemDesc(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500" required />
-          </div>
-          <div className="flex-1">
-            <label className="block text-sm font-medium text-slate-700 mb-1">Cód. Proveedor</label>
-            <input type="text" value={newProviderCode} onChange={e => handleProviderCodeChange(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500" />
-            {providerNamePreview && <p className="text-xs mt-1 text-slate-500 font-medium truncate">{providerNamePreview}</p>}
-          </div>
-          <div className="flex items-end">
-            <button type="submit" className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition h-[42px]">
-              <Plus size={20} />
-            </button>
-          </div>
-        </form>
 
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 text-sm">
-              <tr>
-                <th className="p-4 font-semibold">Cód. Art</th>
-                <th className="p-4 font-semibold">Descripción</th>
-                <th className="p-4 font-semibold">Proveedor</th>
-                <th className="p-4 font-semibold w-16"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map(item => (
-                <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="p-4 font-mono text-sm">{item.codigo_articulo}</td>
-                  <td className="p-4 text-slate-800">{item.descripcion}</td>
-                  <td className="p-4">
-                    {item.codigo_proveedor && <span className="font-mono text-sm mr-2">{item.codigo_proveedor}</span>}
-                    <span className="text-slate-600 text-sm">{item.nombre_proveedor}</span>
-                  </td>
-                  <td className="p-4 text-center">
-                    <button onClick={() => handleDeleteItem(item.id)} className="text-red-400 hover:text-red-600">
-                      <Trash2 size={18} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {items.length === 0 && (
-                <tr>
-                  <td colSpan="4" className="p-8 text-center text-slate-500">No hay artículos en esta oferta.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+          <div className="lg:col-span-3">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200/60 overflow-hidden h-full min-h-[500px]">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-slate-50/80 backdrop-blur-md sticky top-0 z-10 border-b border-slate-200/80">
+                    <tr>
+                      <th className="p-4 font-semibold text-slate-600 text-sm tracking-wide">Código</th>
+                      <th className="p-4 font-semibold text-slate-600 text-sm tracking-wide">Descripción del Artículo</th>
+                      <th className="p-4 font-semibold text-slate-600 text-sm tracking-wide">Proveedor</th>
+                      <th className="p-4 font-semibold text-slate-600 text-sm tracking-wide w-16 text-center"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {items.length === 0 ? (
+                      <tr>
+                        <td colSpan="4" className="p-16 text-center text-slate-400">
+                          <Box size={40} className="mx-auto mb-3 text-slate-300 opacity-50" />
+                          <p className="text-lg font-medium text-slate-600">Catálogo vacío</p>
+                          <p className="text-sm">Agrega el primer artículo a esta oferta.</p>
+                        </td>
+                      </tr>
+                    ) : (
+                      items.map(item => (
+                        <tr key={item.id} className="group transition-colors duration-200 hover:bg-slate-50">
+                          <td className="p-4">
+                            <span className="font-mono text-sm font-medium bg-slate-100 text-slate-600 px-2 py-1 rounded-md border border-slate-200">
+                              {item.codigo_articulo}
+                            </span>
+                          </td>
+                          <td className="p-4 text-slate-800 font-medium">{item.descripcion}</td>
+                          <td className="p-4">
+                            {item.codigo_proveedor ? (
+                              <div className="flex flex-col">
+                                <span className="text-slate-700 text-sm">{item.nombre_proveedor || 'Desconocido'}</span>
+                                <span className="font-mono text-xs text-slate-400">Cód: {item.codigo_proveedor}</span>
+                              </div>
+                            ) : (
+                              <span className="text-slate-400 text-sm italic">Sin proveedor</span>
+                            )}
+                          </td>
+                          <td className="p-4 text-center">
+                            <button onClick={() => handleDeleteItem(item.id)} className="text-slate-300 hover:text-red-500 p-2 rounded-xl hover:bg-red-50 transition-all duration-200 hover:scale-110 opacity-0 group-hover:opacity-100">
+                              <Trash2 size={18} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
-      <div className="flex justify-between items-end mb-6">
-        <h2 className="text-2xl font-bold text-slate-800">Ofertas y Artículos</h2>
-        <div className="flex gap-2 w-1/3">
+    <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in duration-500">
+      
+      {/* Header & Search */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200/60 p-6 md:p-8 flex flex-col md:flex-row gap-6 justify-between items-center">
+        <div>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2.5 bg-indigo-100 text-indigo-600 rounded-xl">
+              <Tags size={24} />
+            </div>
+            <h2 className="text-3xl font-bold text-slate-800 tracking-tight">Catálogos y Ofertas</h2>
+          </div>
+          <p className="text-slate-500">Gestiona las vigencias y los artículos de cada oferta comercial.</p>
+        </div>
+        
+        <div className="w-full md:w-96 relative group">
+          <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 group-focus-within:text-indigo-500 transition-colors">
+            <Search size={18} />
+          </div>
           <input 
             type="text" 
-            placeholder="Búsqueda global..." 
+            placeholder="Buscar artículo o proveedor..." 
             value={globalSearch}
             onChange={e => setGlobalSearch(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleGlobalSearch()}
-            className="flex-1 p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full pl-10 pr-12 py-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/50 focus:bg-white outline-none transition-all duration-200 shadow-sm"
           />
-          <button onClick={handleGlobalSearch} className="bg-slate-800 text-white p-2 rounded-lg hover:bg-slate-700">
-            <Search size={20} />
+          <button 
+            onClick={handleGlobalSearch} 
+            className="absolute inset-y-1.5 right-1.5 bg-indigo-600 text-white px-3 rounded-lg hover:bg-indigo-700 transition-colors flex items-center justify-center font-medium text-sm shadow-sm"
+          >
+            Buscar
           </button>
         </div>
       </div>
 
       {searchResults ? (
         <div className="space-y-6">
-          <div className="flex justify-between items-center bg-indigo-50 p-4 rounded-lg text-indigo-800">
-            <p>Resultados de búsqueda para: <strong>{globalSearch}</strong></p>
-            <button onClick={() => { setSearchResults(null); setGlobalSearch(''); }} className="text-sm font-semibold underline">Limpiar</button>
-          </div>
-          {Object.values(searchResults).map((group, idx) => (
-            <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="bg-slate-50 border-b border-slate-200 p-4">
-                <h3 className="font-bold text-slate-800">{group.offer.nombre_oferta}</h3>
-              </div>
-              <table className="w-full text-left">
-                <tbody>
-                  {group.items.map((item, i) => (
-                    <tr key={i} className="border-b border-slate-100 last:border-0 hover:bg-slate-50 text-sm">
-                      <td className="p-3 font-mono w-32">{item.codigo_articulo}</td>
-                      <td className="p-3 text-slate-800">{item.descripcion}</td>
-                      <td className="p-3 w-48 text-slate-600">{item.nombre_proveedor}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <div className="flex justify-between items-center bg-indigo-50 border border-indigo-100 p-5 rounded-2xl text-indigo-800">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-indigo-100 rounded-lg"><Activity size={20} className="text-indigo-600"/></div>
+              <p className="font-medium">Resultados globales para: <span className="font-bold">"{globalSearch}"</span></p>
             </div>
-          ))}
-          {Object.keys(searchResults).length === 0 && (
-            <p className="text-center text-slate-500 p-8 bg-white rounded-xl border border-slate-200">No se encontraron artículos.</p>
+            <button onClick={() => { setSearchResults(null); setGlobalSearch(''); }} className="px-4 py-2 bg-white text-indigo-600 rounded-lg hover:bg-indigo-100 text-sm font-semibold transition-colors shadow-sm">
+              Limpiar filtros
+            </button>
+          </div>
+          
+          {Object.keys(searchResults).length === 0 ? (
+            <div className="p-16 text-center text-slate-400 bg-white rounded-2xl border border-slate-200/60 shadow-sm">
+              <Search size={40} className="mx-auto mb-3 text-slate-300 opacity-50" />
+              <p className="text-lg font-medium text-slate-600">Sin coincidencias</p>
+              <p className="text-sm">Prueba buscando con otros términos.</p>
+            </div>
+          ) : (
+            Object.values(searchResults).map((group, idx) => (
+              <div key={idx} className="bg-white rounded-2xl shadow-sm border border-slate-200/60 overflow-hidden">
+                <div className="bg-slate-50 border-b border-slate-200/60 p-4 px-6 flex items-center gap-3">
+                  <Tags size={18} className="text-slate-400" />
+                  <h3 className="font-bold text-slate-800">{group.offer.nombre_oferta}</h3>
+                  <span className="ml-auto text-xs font-semibold bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full">
+                    {group.items.length} coincidencia{group.items.length !== 1 ? 's' : ''}
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <tbody className="divide-y divide-slate-100">
+                      {group.items.map((item, i) => (
+                        <tr key={i} className="hover:bg-slate-50 transition-colors">
+                          <td className="p-4 px-6 font-mono text-sm w-40 text-slate-600">{item.codigo_articulo}</td>
+                          <td className="p-4 px-6 text-slate-800 font-medium">{item.descripcion}</td>
+                          <td className="p-4 px-6 w-64">
+                            <span className="text-slate-600 text-sm flex items-center gap-2">
+                              <Building2 size={14} className="text-slate-400"/>
+                              {item.nombre_proveedor || 'Sin proveedor'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))
           )}
         </div>
       ) : (
-        <>
-          <form onSubmit={handleCreateOffer} className="flex gap-4 mb-8 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <div className="flex-[2]">
-              <label className="block text-sm font-medium text-slate-700 mb-1">Nombre Oferta</label>
-              <input type="text" value={newOfferName} onChange={e => setNewOfferName(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500" required />
-            </div>
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-slate-700 mb-1">Inicio</label>
-              <input type="date" value={newOfferStart} onChange={e => setNewOfferStart(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500" />
-            </div>
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-slate-700 mb-1">Fin</label>
-              <input type="date" value={newOfferEnd} onChange={e => setNewOfferEnd(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500" />
-            </div>
-            <div className="flex items-end">
-              <button type="submit" className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition h-[42px]">Crear</button>
-            </div>
-          </form>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {offers.map(o => (
-              <div key={o.id} className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 hover:shadow-md transition cursor-pointer relative group" onClick={() => setSelectedOffer(o)}>
-                <h3 className="font-bold text-lg text-slate-800 mb-2 pr-8">{o.nombre_oferta}</h3>
-                <p className="text-sm text-slate-500">Del: {o.vigencia_inicio || '-'}</p>
-                <p className="text-sm text-slate-500">Al: {o.vigencia_fin || '-'}</p>
-                <button onClick={(e) => { e.stopPropagation(); handleDeleteOffer(o.id); }} className="absolute top-4 right-4 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition">
-                  <Trash2 size={18} />
+        <div className="grid grid-cols-1 xl:grid-cols-4 gap-8">
+          
+          {/* Create Offer Form */}
+          <div className="xl:col-span-1">
+            <form onSubmit={handleCreateOffer} className="bg-white rounded-2xl shadow-sm border border-slate-200/60 p-6 sticky top-8">
+              <h3 className="font-bold text-slate-800 text-lg mb-5 flex items-center gap-2 border-b border-slate-100 pb-4">
+                <Plus size={20} className="text-indigo-500" /> Nueva Oferta
+              </h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Nombre de Catálogo</label>
+                  <input type="text" value={newOfferName} onChange={e => setNewOfferName(e.target.value)} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/50 outline-none" required />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Desde</label>
+                    <input type="date" value={newOfferStart} onChange={e => setNewOfferStart(e.target.value)} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/50 outline-none text-sm text-slate-600" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Hasta</label>
+                    <input type="date" value={newOfferEnd} onChange={e => setNewOfferEnd(e.target.value)} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/50 outline-none text-sm text-slate-600" />
+                  </div>
+                </div>
+                <button type="submit" disabled={!newOfferName.trim()} className="w-full bg-indigo-600 text-white px-6 py-3 rounded-xl hover:bg-indigo-700 transition-all duration-200 font-semibold shadow-sm mt-2 disabled:opacity-50">
+                  Crear Oferta
                 </button>
               </div>
-            ))}
+            </form>
           </div>
-        </>
+
+          {/* Offers Grid */}
+          <div className="xl:col-span-3">
+            {isLoading ? (
+              <div className="flex justify-center p-20"><div className="w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div></div>
+            ) : offers.length === 0 ? (
+              <div className="p-20 text-center text-slate-400 bg-white rounded-2xl border border-slate-200/60 border-dashed">
+                <Tags size={48} className="mx-auto mb-4 text-slate-300 opacity-50" />
+                <p className="text-xl font-medium text-slate-600 mb-2">No hay ofertas creadas</p>
+                <p className="text-sm max-w-sm mx-auto">Comienza creando tu primera campaña u oferta en el panel lateral para empezar a agregar artículos.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {offers.map(o => {
+                  const status = getOfferStatus(o.vigencia_fin);
+                  return (
+                    <div 
+                      key={o.id} 
+                      onClick={() => setSelectedOffer(o)}
+                      className="bg-white rounded-2xl shadow-sm hover:shadow-md border border-slate-200/60 p-6 cursor-pointer transition-all duration-200 group relative hover:-translate-y-1 flex flex-col h-full"
+                    >
+                      <div className="flex justify-between items-start mb-4">
+                        <h3 className="font-bold text-lg text-slate-800 pr-8 leading-tight">{o.nombre_oferta}</h3>
+                        <span className={`text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md border ${status.classes}`}>
+                          {status.text}
+                        </span>
+                      </div>
+                      
+                      <div className="mt-auto pt-4 border-t border-slate-100 flex items-center gap-4">
+                        <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
+                          <Calendar size={14} className="text-slate-400"/>
+                          {o.vigencia_inicio || '-'} <span className="mx-1 text-slate-300">→</span> {o.vigencia_fin || '-'}
+                        </div>
+                      </div>
+
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handleDeleteOffer(o.id); }} 
+                        className="absolute top-5 right-5 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all duration-200 hover:bg-red-50 p-2 rounded-lg"
+                        title="Eliminar oferta"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          
+        </div>
       )}
     </div>
   );
