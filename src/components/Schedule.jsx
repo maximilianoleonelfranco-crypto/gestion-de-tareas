@@ -1,170 +1,155 @@
-import React, { useState, useEffect } from 'react';
-import { Loader2, Trash2, Save, Plus } from 'lucide-react';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { useState, useEffect } from 'react';
+import { collection, addDoc, getDocs, doc, deleteDoc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { Trash2 } from 'lucide-react';
 
 const DAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 
 export default function Schedule() {
-  const [schedule, setSchedule] = useState({});
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-
-  // Form state
-  const [newDay, setNewDay] = useState('Lunes');
-  const [newName, setNewName] = useState('');
+  const [schedule, setSchedule] = useState([]);
+  const [searchFilter, setSearchFilter] = useState('');
+  
   const [newCode, setNewCode] = useState('');
+  const [providerNamePreview, setProviderNamePreview] = useState('');
+  const [dayOut, setDayOut] = useState('Lunes');
+  const [dayIn, setDayIn] = useState('Lunes');
 
-  const initSchedule = () => {
-    const initial = {};
-    DAYS.forEach(day => {
-      initial[day] = [];
-    });
-    return initial;
+  const fetchSchedule = async () => {
+    const snapshot = await getDocs(collection(db, 'schedule'));
+    setSchedule(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
   };
 
   useEffect(() => {
-    const fetchSchedule = async () => {
-      setLoading(true);
-      try {
-        const docRef = doc(db, 'settings', 'schedule');
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setSchedule({ ...initSchedule(), ...docSnap.data() });
-        } else {
-          setSchedule(initSchedule());
-        }
-      } catch (error) {
-        console.error("Error fetching schedule:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchSchedule();
   }, []);
 
-  const handleAdd = (e) => {
-    e.preventDefault();
-    if (!newName.trim() || !newCode.trim()) return;
-
-    setSchedule(prev => ({
-      ...prev,
-      [newDay]: [...(prev[newDay] || []), { id: Date.now().toString(), name: newName.trim(), code: newCode.trim() }]
-    }));
-
-    setNewName('');
-    setNewCode('');
-  };
-
-  const handleRemove = (day, id) => {
-    setSchedule(prev => ({
-      ...prev,
-      [day]: prev[day].filter(item => item.id !== id)
-    }));
-  };
-
-  const saveSchedule = async () => {
-    setSaving(true);
-    try {
-      await setDoc(doc(db, 'settings', 'schedule'), schedule);
-      alert('Agenda guardada correctamente');
-    } catch (error) {
-      console.error("Error saving schedule:", error);
-      alert('Error al guardar la agenda');
-    } finally {
-      setSaving(false);
+  const handleProviderCodeChange = async (code) => {
+    setNewCode(code);
+    if (!code.trim()) {
+      setProviderNamePreview('');
+      return;
+    }
+    const docRef = doc(db, 'suppliers', code.trim());
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      setProviderNamePreview(docSnap.data().nombre);
+    } else {
+      setProviderNamePreview('No encontrado');
     }
   };
 
-  if (loading) {
-    return (
-      <div className="workspace-container" style={{ padding: '40px', textAlign: 'center' }}>
-        <Loader2 size={32} className="spinner" style={{ animation: 'spin 1s linear infinite' }} />
-      </div>
-    );
-  }
+  const handleAdd = async (e) => {
+    e.preventDefault();
+    if (!newCode.trim()) return;
+    await addDoc(collection(db, 'schedule'), {
+      codigo_proveedor: newCode,
+      nombre_proveedor: providerNamePreview !== 'No encontrado' ? providerNamePreview : '',
+      dia_pedido: dayOut,
+      dia_entrega: dayIn
+    });
+    setNewCode('');
+    setProviderNamePreview('');
+    fetchSchedule();
+  };
+
+  const handleDelete = async (id) => {
+    await deleteDoc(doc(db, 'schedule', id));
+    fetchSchedule();
+  };
+
+  // Filtrado local
+  const term = searchFilter.toLowerCase();
+  const filteredSchedule = schedule.filter(s => 
+    (s.codigo_proveedor || '').toLowerCase().includes(term) ||
+    (s.nombre_proveedor || '').toLowerCase().includes(term)
+  );
 
   return (
-    <div className="workspace-container" style={{ background: 'transparent', boxShadow: 'none' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-        <h2 style={{ fontSize: '20px', fontWeight: '600' }}>Agenda de Proveedores (Pedidos Automáticos)</h2>
-        <button className="btn-primary btn-sage" onClick={saveSchedule} disabled={saving}>
-          {saving ? <Loader2 size={16} className="spinner" style={{ animation: 'spin 1s linear infinite' }} /> : <Save size={16} />}
-          Guardar Cambios
-        </button>
+    <div className="p-6 max-w-7xl mx-auto">
+      <div className="flex justify-between items-end mb-6">
+        <h2 className="text-2xl font-bold text-slate-800">Agenda de Proveedores</h2>
+        <div className="w-1/3">
+          <input 
+            type="text" 
+            placeholder="Filtrar por proveedor o código..." 
+            value={searchFilter}
+            onChange={e => setSearchFilter(e.target.value)}
+            className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+        </div>
       </div>
 
-      {/* Formulario de Agregado Rápido */}
-      <div style={{ background: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', marginBottom: '32px' }}>
-        <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '16px' }}>Añadir nuevo pedido</h3>
-        <form onSubmit={handleAdd} style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <div style={{ flex: 1, minWidth: '150px' }}>
-            <label className="form-label">Día de la semana</label>
-            <select 
-              className="form-input" 
-              value={newDay} 
-              onChange={(e) => setNewDay(e.target.value)}
-              style={{ padding: '10px 14px' }}
-            >
-              {DAYS.map(day => <option key={day} value={day}>{day}</option>)}
-            </select>
-          </div>
-          <div style={{ flex: 2, minWidth: '200px' }}>
-            <label className="form-label">Código del proveedor</label>
-            <input 
-              type="text" 
-              className="form-input" 
-              placeholder="Ej: 12018"
-              value={newCode}
-              onChange={(e) => setNewCode(e.target.value)}
-            />
-          </div>
-          <div style={{ flex: 3, minWidth: '250px' }}>
-            <label className="form-label">Nombre del proveedor</label>
-            <input 
-              type="text" 
-              className="form-input" 
-              placeholder="Ej: Conaprole Sub Productos + Congelados"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-            />
-          </div>
-          <button type="submit" className="btn-primary" disabled={!newName.trim() || !newCode.trim()} style={{ height: '42px' }}>
-            <Plus size={16} /> Agregar
-          </button>
-        </form>
-      </div>
+      <form onSubmit={handleAdd} className="flex gap-4 mb-8 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <div className="flex-1">
+          <label className="block text-sm font-medium text-slate-700 mb-1">Proveedor (Cód)</label>
+          <input type="text" value={newCode} onChange={e => handleProviderCodeChange(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500" required />
+          {providerNamePreview && <p className="text-xs mt-1 text-slate-500 font-medium truncate">{providerNamePreview}</p>}
+        </div>
+        <div className="flex-[1.5]">
+          <label className="block text-sm font-medium text-slate-700 mb-1">Día salen pedidos</label>
+          <select value={dayOut} onChange={e => setDayOut(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
+            {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </div>
+        <div className="flex-[1.5]">
+          <label className="block text-sm font-medium text-slate-700 mb-1">Día de entrega</label>
+          <select value={dayIn} onChange={e => setDayIn(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
+            {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </div>
+        <div className="flex items-end">
+          <button type="submit" className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition h-[42px]">Agendar</button>
+        </div>
+      </form>
 
-      {/* Grid de Días */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
-        {DAYS.map(day => (
-          <div key={day} style={{ background: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '16px', paddingBottom: '8px', borderBottom: '2px solid #f1f5f9' }}>
-              {day}
-            </h3>
-            
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {schedule[day] && schedule[day].length > 0 ? (
-                schedule[day].map((item) => (
-                  <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: '#f8fafc', borderRadius: '6px', fontSize: '14px' }}>
-                    <span style={{ fontWeight: '500', color: '#334155' }}>
-                      {item.code} - {item.name}
-                    </span>
-                    <button 
-                      onClick={() => handleRemove(day, item.id)}
-                      style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex' }}
-                      title="Eliminar"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))
-              ) : (
-                <p style={{ fontSize: '13px', color: '#94a3b8', textAlign: 'center', margin: '16px 0' }}>Sin pedidos este día</p>
-              )}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-7 gap-4">
+        {DAYS.map(day => {
+          const outItems = filteredSchedule.filter(s => s.dia_pedido === day);
+          const inItems = filteredSchedule.filter(s => s.dia_entrega === day);
+          
+          return (
+            <div key={day} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
+              <div className="bg-slate-800 text-white p-3 text-center font-bold">
+                {day}
+              </div>
+              <div className="flex-1 p-3 flex flex-col gap-4">
+                
+                <div>
+                  <h4 className="text-xs font-bold text-indigo-600 uppercase mb-2 border-b pb-1">Salen Pedidos</h4>
+                  <ul className="space-y-2">
+                    {outItems.map(s => (
+                      <li key={`out-${s.id}`} className="text-sm flex justify-between items-start group">
+                        <span>
+                          <span className="font-mono text-xs text-slate-500 block">{s.codigo_proveedor}</span>
+                          <span className="text-slate-800 leading-tight">{s.nombre_proveedor || 'Sin nombre'}</span>
+                        </span>
+                        <button onClick={() => handleDelete(s.id)} className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100"><Trash2 size={14}/></button>
+                      </li>
+                    ))}
+                    {outItems.length === 0 && <p className="text-xs text-slate-400 italic">Ninguno</p>}
+                  </ul>
+                </div>
+
+                <div>
+                  <h4 className="text-xs font-bold text-emerald-600 uppercase mb-2 border-b pb-1">Entregas</h4>
+                  <ul className="space-y-2">
+                    {inItems.map(s => (
+                      <li key={`in-${s.id}`} className="text-sm flex justify-between items-start group">
+                        <span>
+                          <span className="font-mono text-xs text-slate-500 block">{s.codigo_proveedor}</span>
+                          <span className="text-slate-800 leading-tight">{s.nombre_proveedor || 'Sin nombre'}</span>
+                        </span>
+                        <button onClick={() => handleDelete(s.id)} className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100"><Trash2 size={14}/></button>
+                      </li>
+                    ))}
+                    {inItems.length === 0 && <p className="text-xs text-slate-400 italic">Ninguna</p>}
+                  </ul>
+                </div>
+
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
