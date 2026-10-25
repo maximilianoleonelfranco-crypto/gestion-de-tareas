@@ -65,7 +65,7 @@ export default function App() {
           </h1>
         </header>
 
-        <div className="p-4 md:p-8 max-w-7xl mx-auto w-full">
+        <div className="p-4 md:p-8 max-w-[1600px] mx-auto w-full">
           {currentTab === 'tasks' && <Tasks />}
           {currentTab === 'suppliers' && <Suppliers />}
           {currentTab === 'offers' && <Offers />}

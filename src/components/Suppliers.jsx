@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, setDoc, getDocs, doc, deleteDoc } from 'firebase/firestore';
+import { collection, setDoc, getDocs, doc, deleteDoc, addDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { 
   Trash2, 
@@ -11,8 +11,12 @@ import {
   ArrowUpRight, 
   Truck, 
   CalendarDays, 
-  Info 
+  Info,
+  Pencil,
+  Check
 } from 'lucide-react';
+
+const DAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 
 export default function Suppliers() {
   const [suppliers, setSuppliers] = useState([]);
@@ -25,6 +29,17 @@ export default function Suppliers() {
   const [selectedSupplier, setSelectedSupplier] = useState(null);
   const [supplierSchedule, setSupplierSchedule] = useState([]);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
+  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
+
+  // Estado para cargar nuevo día en la ficha
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newDayOut, setNewDayOut] = useState('Lunes');
+  const [newDayIn, setNewDayIn] = useState('Miércoles');
+
+  // Estado para modificar día existente en la ficha
+  const [editingScheduleId, setEditingScheduleId] = useState(null);
+  const [editDayOut, setEditDayOut] = useState('Lunes');
+  const [editDayIn, setEditDayIn] = useState('Miércoles');
 
   const fetchSuppliers = async () => {
     setIsLoading(true);
@@ -37,15 +52,21 @@ export default function Suppliers() {
     fetchSuppliers();
   }, []);
 
+  const refreshSupplierSchedule = async (supplierCode) => {
+    const snap = await getDocs(collection(db, 'schedule'));
+    const matches = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(s => (s.codigo_proveedor || '').trim().toLowerCase() === (supplierCode || '').trim().toLowerCase());
+    setSupplierSchedule(matches);
+  };
+
   const openSupplierModal = async (supplier) => {
     setSelectedSupplier(supplier);
+    setShowAddForm(false);
+    setEditingScheduleId(null);
     setLoadingSchedule(true);
     try {
-      const snap = await getDocs(collection(db, 'schedule'));
-      const matches = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter(s => (s.codigo_proveedor || '').trim().toLowerCase() === (supplier.codigo_proveedor || '').trim().toLowerCase());
-      setSupplierSchedule(matches);
+      await refreshSupplierSchedule(supplier.codigo_proveedor);
     } catch (err) {
       console.error('Error fetching supplier schedule:', err);
       setSupplierSchedule([]);
@@ -57,6 +78,8 @@ export default function Suppliers() {
   const closeSupplierModal = () => {
     setSelectedSupplier(null);
     setSupplierSchedule([]);
+    setShowAddForm(false);
+    setEditingScheduleId(null);
   };
 
   // Close modal on escape key
@@ -87,6 +110,68 @@ export default function Suppliers() {
       closeSupplierModal();
     }
     fetchSuppliers();
+  };
+
+  // Acciones de Agenda dentro de la Ficha
+  const handleAddNewSchedule = async (e) => {
+    if (e) e.preventDefault();
+    if (!selectedSupplier) return;
+    setIsSavingSchedule(true);
+    try {
+      await addDoc(collection(db, 'schedule'), {
+        codigo_proveedor: selectedSupplier.codigo_proveedor,
+        nombre_proveedor: selectedSupplier.nombre,
+        dia_pedido: newDayOut,
+        dia_entrega: newDayIn
+      });
+      await refreshSupplierSchedule(selectedSupplier.codigo_proveedor);
+      setShowAddForm(false);
+      setNewDayOut('Lunes');
+      setNewDayIn('Miércoles');
+    } catch (err) {
+      console.error('Error adding schedule:', err);
+    } finally {
+      setIsSavingSchedule(false);
+    }
+  };
+
+  const startEditing = (item) => {
+    setEditingScheduleId(item.id);
+    setEditDayOut(item.dia_pedido || 'Lunes');
+    setEditDayIn(item.dia_entrega || 'Lunes');
+  };
+
+  const cancelEditing = () => {
+    setEditingScheduleId(null);
+  };
+
+  const saveEditing = async (itemId) => {
+    if (!itemId) return;
+    setIsSavingSchedule(true);
+    try {
+      await updateDoc(doc(db, 'schedule', itemId), {
+        dia_pedido: editDayOut,
+        dia_entrega: editDayIn
+      });
+      await refreshSupplierSchedule(selectedSupplier.codigo_proveedor);
+      setEditingScheduleId(null);
+    } catch (err) {
+      console.error('Error updating schedule:', err);
+    } finally {
+      setIsSavingSchedule(false);
+    }
+  };
+
+  const deleteScheduleItem = async (itemId) => {
+    setIsSavingSchedule(true);
+    try {
+      await deleteDoc(doc(db, 'schedule', itemId));
+      await refreshSupplierSchedule(selectedSupplier.codigo_proveedor);
+    } catch (err) {
+      console.error('Error deleting schedule item:', err);
+    } finally {
+      setIsSavingSchedule(false);
+    }
   };
 
   const normalizeText = (text) => 
@@ -320,7 +405,7 @@ export default function Suppliers() {
         >
           <div 
             onClick={e => e.stopPropagation()} 
-            className="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-lg w-full overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200"
+            className="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-xl w-full overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200"
           >
             {/* Modal Header */}
             <div className="p-6 md:p-8 bg-gradient-to-br from-indigo-600 to-indigo-800 text-white relative">
@@ -348,55 +433,224 @@ export default function Suppliers() {
             {/* Modal Body */}
             <div className="p-6 md:p-8 overflow-y-auto space-y-6">
               <div>
-                <div className="flex items-center gap-2 mb-4">
-                  <CalendarDays size={20} className="text-indigo-600" />
-                  <h4 className="font-bold text-slate-800 text-base md:text-lg">
-                    Agenda Operativa
-                  </h4>
+                <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <CalendarDays size={20} className="text-indigo-600" />
+                    <h4 className="font-bold text-slate-800 text-base md:text-lg">
+                      Agenda Operativa
+                    </h4>
+                  </div>
+                  {!showAddForm && (
+                    <button 
+                      onClick={() => setShowAddForm(true)}
+                      className="text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-xl transition-colors flex items-center gap-1.5 shadow-sm"
+                    >
+                      <Plus size={14} /> Cargar día
+                    </button>
+                  )}
                 </div>
+
+                {/* Formulario para agregar nuevo día a la agenda */}
+                {showAddForm && (
+                  <form onSubmit={handleAddNewSchedule} className="bg-indigo-50/60 border border-indigo-200/80 rounded-2xl p-4 md:p-5 space-y-4 mb-4 animate-in slide-in-from-top-2 duration-200">
+                    <div className="flex items-center justify-between">
+                      <h5 className="text-xs font-bold uppercase tracking-wider text-indigo-800 flex items-center gap-1.5">
+                        <Plus size={14} /> Cargar nuevo día de agenda
+                      </h5>
+                      {supplierSchedule.length > 0 && (
+                        <button 
+                          type="button" 
+                          onClick={() => setShowAddForm(false)}
+                          className="text-slate-400 hover:text-slate-600 p-1"
+                        >
+                          <X size={16} />
+                        </button>
+                      )}
+                    </div>
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                          <ArrowUpRight size={13} className="text-orange-500" /> Sale Pedido
+                        </label>
+                        <select 
+                          value={newDayOut} 
+                          onChange={e => setNewDayOut(e.target.value)}
+                          className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/50 outline-none text-sm font-medium text-slate-700 cursor-pointer"
+                        >
+                          {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                          <Truck size={13} className="text-emerald-500" /> Día Entrega
+                        </label>
+                        <select 
+                          value={newDayIn} 
+                          onChange={e => setNewDayIn(e.target.value)}
+                          className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/50 outline-none text-sm font-medium text-slate-700 cursor-pointer"
+                        >
+                          {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-1">
+                      {supplierSchedule.length > 0 && (
+                        <button 
+                          type="button" 
+                          onClick={() => setShowAddForm(false)}
+                          className="px-4 py-2 bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl text-xs font-semibold transition-colors"
+                        >
+                          Cancelar
+                        </button>
+                      )}
+                      <button 
+                        type="submit" 
+                        disabled={isSavingSchedule}
+                        className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        <Check size={14} /> {isSavingSchedule ? 'Guardando...' : 'Guardar en Agenda'}
+                      </button>
+                    </div>
+                  </form>
+                )}
 
                 {loadingSchedule ? (
                   <div className="py-12 flex justify-center items-center">
                     <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
                   </div>
-                ) : supplierSchedule.length === 0 ? (
-                  <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-6 text-center text-slate-500">
-                    <Info size={32} className="mx-auto text-slate-400 mb-2" />
-                    <p className="font-semibold text-slate-700">Sin agenda registrada</p>
-                    <p className="text-xs md:text-sm text-slate-400 mt-1 max-w-xs mx-auto">
-                      Este proveedor aún no tiene días de salida de pedidos ni entregas asignados en la pestaña Agenda.
-                    </p>
+                ) : supplierSchedule.length === 0 && !showAddForm ? (
+                  <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-6 text-center text-slate-500 space-y-3">
+                    <Info size={32} className="mx-auto text-slate-400" />
+                    <div>
+                      <p className="font-semibold text-slate-700">Sin agenda registrada</p>
+                      <p className="text-xs md:text-sm text-slate-400 mt-1 max-w-xs mx-auto">
+                        Este proveedor no tiene días de salida de pedidos ni entregas asignados.
+                      </p>
+                    </div>
+                    <button 
+                      onClick={() => setShowAddForm(true)}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold transition-all shadow-sm inline-flex items-center gap-1.5"
+                    >
+                      <Plus size={14} /> Cargar agenda ahora
+                    </button>
                   </div>
                 ) : (
                   <div className="space-y-4">
                     {supplierSchedule.map((item, idx) => (
                       <div 
                         key={item.id || idx}
-                        className="bg-slate-50 border border-slate-200/80 rounded-2xl p-5 shadow-sm space-y-4"
+                        className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 md:p-5 shadow-sm space-y-3 transition-all hover:border-slate-300"
                       >
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {/* Salida de pedido */}
-                          <div className="bg-orange-50/70 border border-orange-200/60 rounded-xl p-4 flex flex-col">
-                            <div className="flex items-center gap-1.5 text-orange-600 text-xs font-semibold uppercase tracking-wider mb-1.5">
-                              <ArrowUpRight size={16} />
-                              <span>Sale Pedido</span>
+                        {/* Modo Edición */}
+                        {editingScheduleId === item.id ? (
+                          <div className="space-y-3 bg-white p-4 rounded-xl border border-indigo-200 shadow-sm">
+                            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                              <span className="text-xs font-bold text-indigo-700 uppercase tracking-wider">
+                                Modificar días asignados
+                              </span>
+                              <button 
+                                onClick={cancelEditing}
+                                className="text-slate-400 hover:text-slate-600 p-1"
+                                title="Cancelar edición"
+                              >
+                                <X size={16} />
+                              </button>
                             </div>
-                            <span className="text-xl font-bold text-slate-800">
-                              {item.dia_pedido || 'No asignado'}
-                            </span>
-                          </div>
 
-                          {/* Entrega */}
-                          <div className="bg-emerald-50/70 border border-emerald-200/60 rounded-xl p-4 flex flex-col">
-                            <div className="flex items-center gap-1.5 text-emerald-600 text-xs font-semibold uppercase tracking-wider mb-1.5">
-                              <Truck size={16} />
-                              <span>Día de Entrega</span>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1 flex items-center gap-1">
+                                  <ArrowUpRight size={13} className="text-orange-500" /> Sale Pedido
+                                </label>
+                                <select 
+                                  value={editDayOut} 
+                                  onChange={e => setEditDayOut(e.target.value)}
+                                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/50 outline-none text-sm font-medium text-slate-800 cursor-pointer"
+                                >
+                                  {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
+                                </select>
+                              </div>
+
+                              <div>
+                                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1 flex items-center gap-1">
+                                  <Truck size={13} className="text-emerald-500" /> Día Entrega
+                                </label>
+                                <select 
+                                  value={editDayIn} 
+                                  onChange={e => setEditDayIn(e.target.value)}
+                                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/50 outline-none text-sm font-medium text-slate-800 cursor-pointer"
+                                >
+                                  {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
+                                </select>
+                              </div>
                             </div>
-                            <span className="text-xl font-bold text-slate-800">
-                              {item.dia_entrega || 'No asignado'}
-                            </span>
+
+                            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                              <button 
+                                type="button" 
+                                onClick={cancelEditing}
+                                className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-semibold transition-colors"
+                              >
+                                Cancelar
+                              </button>
+                              <button 
+                                type="button" 
+                                disabled={isSavingSchedule}
+                                onClick={() => saveEditing(item.id)}
+                                className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                              >
+                                <Check size={14} /> {isSavingSchedule ? 'Guardando...' : 'Guardar Cambios'}
+                              </button>
+                            </div>
                           </div>
-                        </div>
+                        ) : (
+                          /* Modo Vista */
+                          <>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              {/* Salida de pedido */}
+                              <div className="bg-orange-50/70 border border-orange-200/60 rounded-xl p-3.5 flex flex-col">
+                                <div className="flex items-center gap-1.5 text-orange-600 text-xs font-semibold uppercase tracking-wider mb-1">
+                                  <ArrowUpRight size={15} />
+                                  <span>Sale Pedido</span>
+                                </div>
+                                <span className="text-lg md:text-xl font-bold text-slate-800">
+                                  {item.dia_pedido || 'No asignado'}
+                                </span>
+                              </div>
+
+                              {/* Entrega */}
+                              <div className="bg-emerald-50/70 border border-emerald-200/60 rounded-xl p-3.5 flex flex-col">
+                                <div className="flex items-center gap-1.5 text-emerald-600 text-xs font-semibold uppercase tracking-wider mb-1">
+                                  <Truck size={15} />
+                                  <span>Día de Entrega</span>
+                                </div>
+                                <span className="text-lg md:text-xl font-bold text-slate-800">
+                                  {item.dia_entrega || 'No asignado'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Acciones de item */}
+                            <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-200/50">
+                              <button 
+                                onClick={() => startEditing(item)}
+                                className="text-xs font-semibold text-indigo-600 bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 shadow-sm"
+                              >
+                                <Pencil size={13} /> Modificar días
+                              </button>
+                              <button 
+                                onClick={() => deleteScheduleItem(item.id)}
+                                className="text-xs font-semibold text-slate-400 hover:text-red-600 bg-white hover:bg-red-50 border border-slate-200 hover:border-red-200 p-1.5 rounded-lg transition-all shadow-sm"
+                                title="Eliminar este registro de agenda"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </>
+                        )}
                       </div>
                     ))}
                   </div>
