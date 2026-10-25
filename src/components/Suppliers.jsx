@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { collection, setDoc, getDocs, doc, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Trash2, Building2, Plus, UsersRound } from 'lucide-react';
+import { Trash2, Building2, Plus, UsersRound, Search, X } from 'lucide-react';
 
 export default function Suppliers() {
   const [suppliers, setSuppliers] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -36,6 +37,24 @@ export default function Suppliers() {
     fetchSuppliers();
   };
 
+  const normalizeText = (text) => 
+    (text || '')
+      .toString()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+
+  const searchTokens = normalizeText(searchTerm).split(/\s+/).filter(Boolean);
+
+  const filteredSuppliers = suppliers.filter(s => {
+    if (searchTokens.length === 0) return true;
+    const targetCode = normalizeText(s.codigo_proveedor);
+    const targetName = normalizeText(s.nombre);
+    const combined = `${targetCode} ${targetName}`;
+    return searchTokens.every(token => combined.includes(token));
+  });
+
   return (
     <div className="w-full max-w-5xl mx-auto space-y-6 md:space-y-8">
       
@@ -49,9 +68,13 @@ export default function Suppliers() {
           </div>
           <p className="text-sm md:text-base text-slate-500">Administra el catálogo central de proveedores del sistema.</p>
         </div>
-        <div className="bg-slate-50 px-8 md:px-6 py-4 rounded-2xl ring-1 ring-slate-100 flex flex-col items-center justify-center w-full md:w-auto">
-          <span className="text-3xl font-bold text-indigo-600">{suppliers.length}</span>
-          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Registrados</span>
+        <div className="bg-slate-50 px-8 md:px-6 py-4 rounded-2xl ring-1 ring-slate-100 flex flex-col items-center justify-center w-full md:w-auto shrink-0">
+          <span className="text-3xl font-bold text-indigo-600">
+            {searchTerm ? `${filteredSuppliers.length} / ${suppliers.length}` : suppliers.length}
+          </span>
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+            {searchTerm ? 'Encontrados' : 'Registrados'}
+          </span>
         </div>
       </div>
 
@@ -99,7 +122,33 @@ export default function Suppliers() {
         </div>
 
         {/* Data Column */}
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-2 space-y-4">
+          
+          {/* Smart Search Bar */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200/60 p-3 md:p-4">
+            <div className="relative flex items-center">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                <Search size={18} />
+              </div>
+              <input 
+                type="text" 
+                placeholder="Buscar por código o nombre (ej: 12018, Conaprole)..." 
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 focus:bg-white outline-none transition-all duration-200 text-sm text-slate-700 placeholder-slate-400"
+              />
+              {searchTerm && (
+                <button 
+                  onClick={() => setSearchTerm('')}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 transition-colors"
+                  title="Limpiar búsqueda"
+                >
+                  <X size={16} />
+                </button>
+              )}
+            </div>
+          </div>
+
           {isLoading ? (
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200/60 p-12 text-center">
               <div className="inline-block w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
@@ -110,11 +159,23 @@ export default function Suppliers() {
               <p className="text-lg font-medium text-slate-600">Base de datos vacía</p>
               <p className="text-sm">Ingresa tu primer proveedor en el formulario.</p>
             </div>
+          ) : filteredSuppliers.length === 0 ? (
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200/60 p-12 text-center text-slate-400">
+              <Search size={40} className="mx-auto mb-3 text-slate-300 opacity-50" />
+              <p className="text-lg font-medium text-slate-600">Sin coincidencias</p>
+              <p className="text-sm mt-1">No se encontró ningún proveedor con "{searchTerm}".</p>
+              <button 
+                onClick={() => setSearchTerm('')}
+                className="mt-4 px-4 py-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-xl text-sm font-semibold transition-colors"
+              >
+                Limpiar búsqueda
+              </button>
+            </div>
           ) : (
             <>
               {/* Mobile Cards View (< md) */}
               <div className="md:hidden flex flex-col gap-4">
-                {suppliers.map(s => (
+                {filteredSuppliers.map(s => (
                   <div key={s.codigo_proveedor} className="bg-white rounded-2xl shadow-sm border border-slate-200/60 p-5 flex justify-between items-center">
                     <div className="min-w-0 pr-4">
                       <span className="font-mono text-xs font-medium bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200/60 block w-fit mb-2">
@@ -133,7 +194,7 @@ export default function Suppliers() {
               </div>
 
               {/* Desktop Table View (>= md) */}
-              <div className="hidden md:flex bg-white rounded-2xl shadow-sm border border-slate-200/60 overflow-hidden flex-col h-full min-h-[500px]">
+              <div className="hidden md:flex bg-white rounded-2xl shadow-sm border border-slate-200/60 overflow-hidden flex-col h-full min-h-[450px]">
                 <div className="overflow-x-auto w-full flex-1">
                   <table className="w-full text-left border-collapse min-w-[500px]">
                     <thead className="bg-slate-50/80 backdrop-blur-md sticky top-0 z-10 border-b border-slate-200/80">
@@ -144,7 +205,7 @@ export default function Suppliers() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {suppliers.map(s => (
+                      {filteredSuppliers.map(s => (
                         <tr key={s.codigo_proveedor} className="group transition-colors duration-200 hover:bg-indigo-50/30">
                           <td className="p-5">
                             <span className="font-mono text-sm font-medium bg-slate-100 text-slate-600 px-2.5 py-1 rounded-md border border-slate-200/60">
