@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { ClipboardList, Users, Tags, CalendarDays } from 'lucide-react';
+import { ClipboardList, Users, Package, Tags, CalendarDays } from 'lucide-react';
 import Tasks from './components/Tasks';
 import Suppliers from './components/Suppliers';
+import Products from './components/Products';
 import Offers from './components/Offers';
 import Schedule from './components/Schedule';
 
@@ -11,6 +12,7 @@ export default function App() {
   const tabs = [
     { id: 'tasks', label: 'Pendientes', icon: ClipboardList },
     { id: 'suppliers', label: 'Proveedores', icon: Users },
+    { id: 'products', label: 'Productos', icon: Package },
     { id: 'offers', label: 'Ofertas', icon: Tags },
     { id: 'schedule', label: 'Agenda', icon: CalendarDays }
   ];
@@ -68,13 +70,14 @@ export default function App() {
         <div className="p-4 md:p-8 max-w-[1600px] mx-auto w-full">
           {currentTab === 'tasks' && <Tasks />}
           {currentTab === 'suppliers' && <Suppliers />}
+          {currentTab === 'products' && <Products />}
           {currentTab === 'offers' && <Offers />}
           {currentTab === 'schedule' && <Schedule />}
         </div>
       </main>
 
       {/* Mobile Bottom Navigation */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t border-slate-200/60 z-30 flex justify-around items-center h-16 px-2 safe-area-pb shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t border-slate-200/60 z-30 flex justify-around items-center h-16 px-1 safe-area-pb shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
         {tabs.map(tab => {
           const Icon = tab.icon;
           const active = currentTab === tab.id;
@@ -82,12 +85,12 @@ export default function App() {
             <button
               key={tab.id}
               onClick={() => setCurrentTab(tab.id)}
-              className={`flex flex-col items-center justify-center w-full h-full gap-1 transition-colors duration-200 ${
+              className={`flex flex-col items-center justify-center w-full h-full gap-0.5 transition-colors duration-200 ${
                 active ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'
               }`}
             >
-              <Icon size={20} className={active ? 'scale-110 transition-transform' : ''} />
-              <span className="text-[10px] font-semibold">{tab.label}</span>
+              <Icon size={19} className={active ? 'scale-110 transition-transform' : ''} />
+              <span className="text-[9px] font-semibold tracking-tight">{tab.label}</span>
             </button>
           );
         })}

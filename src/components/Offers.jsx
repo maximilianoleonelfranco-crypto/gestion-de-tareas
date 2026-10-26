@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, addDoc, getDocs, doc, deleteDoc, getDoc, query, where } from 'firebase/firestore';
+import { collection, addDoc, getDocs, doc, deleteDoc, getDoc, setDoc, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Trash2, Search, ArrowLeft, Plus, Tags, Calendar, Box, Activity, Building2 } from 'lucide-react';
 
@@ -79,16 +79,53 @@ export default function Offers() {
     }
   };
 
+  const handleItemCodeChange = async (code) => {
+    setNewItemCode(code);
+    if (!code.trim()) return;
+    try {
+      const prodSnap = await getDoc(doc(db, 'products', code.trim()));
+      if (prodSnap.exists()) {
+        const prodData = prodSnap.data();
+        if (prodData.descripcion && !newItemDesc) {
+          setNewItemDesc(prodData.descripcion);
+        }
+        if (prodData.codigo_proveedor && !newProviderCode) {
+          setNewProviderCode(prodData.codigo_proveedor);
+          setProviderNamePreview(prodData.nombre_proveedor || '');
+        }
+      }
+    } catch (err) {
+      console.error('Error prefetching product:', err);
+    }
+  };
+
   const handleAddItem = async (e) => {
     e.preventDefault();
     if (!newItemCode.trim() || !newItemDesc.trim()) return;
+
+    const cleanCode = newItemCode.trim();
+    const cleanDesc = newItemDesc.trim();
+    const cleanProviderCode = newProviderCode.trim();
+    const cleanProviderName = providerNamePreview !== 'No encontrado' ? providerNamePreview : '';
+
+    // 1. Guardar en los artículos de la oferta
     await addDoc(collection(db, 'offer_items'), {
       offer_id: selectedOffer.id,
-      codigo_articulo: newItemCode,
-      descripcion: newItemDesc,
-      codigo_proveedor: newProviderCode,
-      nombre_proveedor: providerNamePreview !== 'No encontrado' ? providerNamePreview : ''
+      codigo_articulo: cleanCode,
+      descripcion: cleanDesc,
+      codigo_proveedor: cleanProviderCode,
+      nombre_proveedor: cleanProviderName
     });
+
+    // 2. Guardar por el código en la base de datos de productos ('products')
+    await setDoc(doc(db, 'products', cleanCode), {
+      codigo_articulo: cleanCode,
+      descripcion: cleanDesc,
+      codigo_proveedor: cleanProviderCode,
+      nombre_proveedor: cleanProviderName,
+      updated_at: new Date()
+    }, { merge: true });
+
     setNewItemCode('');
     setNewItemDesc('');
     setNewProviderCode('');
@@ -186,7 +223,7 @@ export default function Offers() {
               <form onSubmit={handleAddItem} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Código de Artículo</label>
-                  <input type="text" value={newItemCode} onChange={e => setNewItemCode(e.target.value)} className="w-full p-3 md:p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/50 outline-none font-mono text-sm" required />
+                  <input type="text" value={newItemCode} onChange={e => handleItemCodeChange(e.target.value)} className="w-full p-3 md:p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/50 outline-none font-mono text-sm" required />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Descripción</label>
