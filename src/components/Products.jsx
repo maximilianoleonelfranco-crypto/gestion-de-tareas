@@ -60,7 +60,7 @@ export default function Products() {
         const item = itemDoc.data();
         if (item.codigo_articulo && item.descripcion) {
           const cleanCode = item.codigo_articulo.trim();
-          await setDoc(doc(db, 'products', cleanCode), {
+          await setDoc(doc(db, 'products', cleanCode.replace(/\//g, '-')), {
             codigo_articulo: cleanCode,
             descripcion: item.descripcion.trim(),
             codigo_proveedor: (item.codigo_proveedor || '').trim(),
@@ -119,7 +119,7 @@ export default function Products() {
     const cleanPCode = providerCode.trim();
     const cleanPName = providerNamePreview !== 'No encontrado' ? providerNamePreview : '';
 
-    await setDoc(doc(db, 'products', cleanCode), {
+    await setDoc(doc(db, 'products', cleanCode.replace(/\//g, '-')), {
       codigo_articulo: cleanCode,
       descripcion: cleanDesc,
       codigo_proveedor: cleanPCode,

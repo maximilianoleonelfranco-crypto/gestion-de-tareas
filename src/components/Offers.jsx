@@ -83,7 +83,7 @@ export default function Offers() {
     setNewItemCode(code);
     if (!code.trim()) return;
     try {
-      const prodSnap = await getDoc(doc(db, 'products', code.trim()));
+      const prodSnap = await getDoc(doc(db, 'products', code.trim().replace(/\//g, '-')));
       if (prodSnap.exists()) {
         const prodData = prodSnap.data();
         if (prodData.descripcion && !newItemDesc) {
@@ -118,7 +118,7 @@ export default function Offers() {
     });
 
     // 2. Guardar por el código en la base de datos de productos ('products')
-    await setDoc(doc(db, 'products', cleanCode), {
+    await setDoc(doc(db, 'products', cleanCode.replace(/\//g, '-')), {
       codigo_articulo: cleanCode,
       descripcion: cleanDesc,
       codigo_proveedor: cleanProviderCode,
