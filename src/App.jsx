@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { ClipboardList, Users, Package, Tags, CalendarDays, Search } from 'lucide-react';
+import { ClipboardList, Users, Package, Tags, CalendarDays, Search, Clock } from 'lucide-react';
 import Tasks from './components/Tasks';
 import Suppliers from './components/Suppliers';
 import Products from './components/Products';
 import Offers from './components/Offers';
 import Schedule from './components/Schedule';
+import WorkSchedules from './components/WorkSchedules';
 import GlobalSearchModal from './components/GlobalSearchModal';
 
 export default function App() {
@@ -16,7 +17,8 @@ export default function App() {
     { id: 'suppliers', label: 'Proveedores', icon: Users },
     { id: 'products', label: 'Productos', icon: Package },
     { id: 'offers', label: 'Ofertas', icon: Tags },
-    { id: 'schedule', label: 'Agenda', icon: CalendarDays }
+    { id: 'schedule', label: 'Agenda', icon: CalendarDays },
+    { id: 'schedules', label: 'Horarios', icon: Clock }
   ];
 
   // Atajo de teclado global: Ctrl + K o Cmd + K
@@ -113,6 +115,7 @@ export default function App() {
           {currentTab === 'products' && <Products />}
           {currentTab === 'offers' && <Offers />}
           {currentTab === 'schedule' && <Schedule />}
+          {currentTab === 'schedules' && <WorkSchedules />}
         </div>
       </main>
 

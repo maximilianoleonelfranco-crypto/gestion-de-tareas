@@ -10,6 +10,7 @@ export default function Offers() {
   const [globalSearch, setGlobalSearch] = useState('');
   const [searchResults, setSearchResults] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [offerFilter, setOfferFilter] = useState('activas'); // 'activas' | 'vencidas' | 'todas'
   
   // States for new offer
   const [newOfferName, setNewOfferName] = useState('');
@@ -171,13 +172,18 @@ export default function Offers() {
     setIsLoading(false);
   };
 
-  const getOfferStatus = (end) => {
-    if (!end) return { text: 'Sin fecha', classes: 'bg-slate-100 text-slate-600 border-slate-200' };
+  const isOfferActive = (end) => {
+    if (!end) return true;
     const today = new Date();
     today.setHours(0,0,0,0);
     const [year, month, day] = end.split('-');
     const endDate = new Date(year, month - 1, day);
-    if (endDate >= today) return { text: 'Activa', classes: 'bg-emerald-100 text-emerald-700 border-emerald-200' };
+    return endDate >= today;
+  };
+
+  const getOfferStatus = (end) => {
+    if (!end) return { text: 'Sin fecha', classes: 'bg-slate-100 text-slate-600 border-slate-200' };
+    if (isOfferActive(end)) return { text: 'Activa', classes: 'bg-emerald-100 text-emerald-700 border-emerald-200' };
     return { text: 'Vencida', classes: 'bg-red-100 text-red-700 border-red-200' };
   };
 
@@ -463,50 +469,124 @@ export default function Offers() {
 
           {/* Offers Grid */}
           <div className="xl:col-span-3">
+            {/* Filter Pills for Offers */}
+            <div className="flex items-center justify-between flex-wrap gap-3 mb-5 bg-white p-3 rounded-2xl border border-slate-200/60 shadow-2xs">
+              <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setOfferFilter('activas')}
+                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg transition-all cursor-pointer ${
+                    offerFilter === 'activas' 
+                      ? 'bg-white text-emerald-700 shadow-2xs font-bold' 
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                  <span>Vigentes ({offers.filter(o => isOfferActive(o.vigencia_fin)).length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOfferFilter('vencidas')}
+                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg transition-all cursor-pointer ${
+                    offerFilter === 'vencidas' 
+                      ? 'bg-white text-red-700 shadow-2xs font-bold' 
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-red-400"></span>
+                  <span>Vencidas ({offers.filter(o => !isOfferActive(o.vigencia_fin)).length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOfferFilter('todas')}
+                  className={`px-3.5 py-2 rounded-lg transition-all cursor-pointer ${
+                    offerFilter === 'todas' 
+                      ? 'bg-white text-indigo-700 shadow-2xs font-bold' 
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <span>Todas ({offers.length})</span>
+                </button>
+              </div>
+
+              <span className="text-xs text-slate-400 font-medium px-2">
+                {offerFilter === 'activas' ? 'Solo ofertas en curso' : offerFilter === 'vencidas' ? 'Historial de ofertas' : 'Todas las campañas'}
+              </span>
+            </div>
+
             {isLoading ? (
               <div className="flex justify-center p-20"><div className="w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div></div>
-            ) : offers.length === 0 ? (
-              <div className="p-12 md:p-20 text-center text-slate-400 bg-white rounded-2xl border border-slate-200/60 border-dashed">
-                <Tags size={48} className="mx-auto mb-4 text-slate-300 opacity-50" />
-                <p className="text-xl font-medium text-slate-600 mb-2">No hay ofertas creadas</p>
-                <p className="text-sm max-w-sm mx-auto">Comienza creando tu primera oferta en el formulario para empezar a agregar articulos.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
-                {offers.map(o => {
-                  const status = getOfferStatus(o.vigencia_fin);
-                  return (
-                    <div 
-                      key={o.id} 
-                      onClick={() => setSelectedOffer(o)}
-                      className="bg-white rounded-2xl shadow-sm hover:shadow-md border border-slate-200/60 p-5 md:p-6 cursor-pointer transition-all duration-200 group relative md:hover:-translate-y-1 flex flex-col h-full"
-                    >
-                      <div className="flex justify-between items-start mb-4 gap-2">
-                        <h3 className="font-bold text-base md:text-lg text-slate-800 pr-6 leading-tight break-words">{o.nombre_oferta}</h3>
-                        <span className={`text-[10px] md:text-[11px] font-bold uppercase tracking-wider px-2 md:px-2.5 py-1 rounded-md border shrink-0 ${status.classes}`}>
-                          {status.text}
-                        </span>
-                      </div>
-                      
-                      <div className="mt-auto pt-4 border-t border-slate-100 flex items-center gap-4">
-                        <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 font-medium">
-                          <Calendar size={14} className="text-slate-400"/>
-                          <span>{o.vigencia_inicio || '-'}</span> <span className="text-slate-300">→</span> <span>{o.vigencia_fin || '-'}</span>
-                        </div>
-                      </div>
+            ) : (() => {
+              const activeOffers = offers.filter(o => isOfferActive(o.vigencia_fin));
+              const expiredOffers = offers.filter(o => !isOfferActive(o.vigencia_fin));
+              const displayedOffers = offerFilter === 'activas' ? activeOffers : offerFilter === 'vencidas' ? expiredOffers : offers;
 
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); handleDeleteOffer(o.id); }} 
-                        className="absolute top-4 right-4 text-slate-300 hover:text-red-500 md:opacity-0 group-hover:opacity-100 transition-all duration-200 hover:bg-red-50 p-2 rounded-lg"
-                        title="Eliminar oferta"
+              if (displayedOffers.length === 0) {
+                return (
+                  <div className="p-12 md:p-16 text-center text-slate-400 bg-white rounded-2xl border border-slate-200/60 shadow-2xs">
+                    <Tags size={44} className="mx-auto mb-3 text-slate-300 opacity-60" />
+                    <p className="text-lg font-semibold text-slate-700">
+                      {offerFilter === 'activas' 
+                        ? 'No hay ofertas vigentes actualmente' 
+                        : offerFilter === 'vencidas'
+                        ? 'No hay ofertas vencidas registradas'
+                        : 'No hay ofertas creadas'}
+                    </p>
+                    <p className="text-sm mt-1 max-w-sm mx-auto">
+                      {offerFilter === 'activas' && expiredOffers.length > 0 
+                        ? 'Tienes ofertas finalizadas guardadas en la pestaña "Vencidas".' 
+                        : 'Crea una nueva oferta desde el panel lateral para comenzar.'}
+                    </p>
+                    {offerFilter !== 'todas' && offers.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setOfferFilter('todas')}
+                        className="mt-4 px-4 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
                       >
-                        <Trash2 size={16} />
+                        Ver todas las ofertas ({offers.length})
                       </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                    )}
+                  </div>
+                );
+              }
+
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
+                  {displayedOffers.map(o => {
+                    const status = getOfferStatus(o.vigencia_fin);
+                    return (
+                      <div 
+                        key={o.id} 
+                        onClick={() => setSelectedOffer(o)}
+                        className="bg-white rounded-2xl shadow-sm hover:shadow-md border border-slate-200/60 p-5 md:p-6 cursor-pointer transition-all duration-200 group relative md:hover:-translate-y-1 flex flex-col h-full"
+                      >
+                        <div className="flex justify-between items-start mb-4 gap-2">
+                          <h3 className="font-bold text-base md:text-lg text-slate-800 pr-6 leading-tight break-words">{o.nombre_oferta}</h3>
+                          <span className={`text-[10px] md:text-[11px] font-bold uppercase tracking-wider px-2 md:px-2.5 py-1 rounded-md border shrink-0 ${status.classes}`}>
+                            {status.text}
+                          </span>
+                        </div>
+                        
+                        <div className="mt-auto pt-4 border-t border-slate-100 flex items-center gap-4">
+                          <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 font-medium">
+                            <Calendar size={14} className="text-slate-400"/>
+                            <span>{o.vigencia_inicio || '-'}</span> <span className="text-slate-300">→</span> <span>{o.vigencia_fin || '-'}</span>
+                          </div>
+                        </div>
+
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); handleDeleteOffer(o.id); }} 
+                          className="absolute top-4 right-4 text-slate-300 hover:text-red-500 md:opacity-0 group-hover:opacity-100 transition-all duration-200 hover:bg-red-50 p-2 rounded-lg"
+                          title="Eliminar oferta"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
           
         </div>
