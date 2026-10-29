@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { collection, addDoc, getDocs, doc, deleteDoc, getDoc, setDoc, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Trash2, Search, ArrowLeft, Plus, Tags, Calendar, Box, Activity, Building2 } from 'lucide-react';
+import { Trash2, Search, ArrowLeft, Plus, Tags, Calendar, Box, Activity, Building2, Edit3, Check, X } from 'lucide-react';
 
 export default function Offers() {
   const [offers, setOffers] = useState([]);
@@ -16,6 +16,19 @@ export default function Offers() {
   const [newOfferName, setNewOfferName] = useState('');
   const [newOfferStart, setNewOfferStart] = useState('');
   const [newOfferEnd, setNewOfferEnd] = useState('');
+
+  // States for editing offer dates (dentro de selectedOffer)
+  const [isEditingDates, setIsEditingDates] = useState(false);
+  const [editOfferName, setEditOfferName] = useState('');
+  const [editStartDate, setEditStartDate] = useState('');
+  const [editEndDate, setEditEndDate] = useState('');
+  const [isSavingDates, setIsSavingDates] = useState(false);
+
+  // States for editing offer from modal (desde la grilla)
+  const [modalEditOffer, setModalEditOffer] = useState(null);
+  const [modalOfferName, setModalOfferName] = useState('');
+  const [modalStartDate, setModalStartDate] = useState('');
+  const [modalEndDate, setModalEndDate] = useState('');
 
   // States for new item
   const [newItemCode, setNewItemCode] = useState('');
@@ -37,6 +50,10 @@ export default function Offers() {
   useEffect(() => {
     if (selectedOffer) {
       fetchItems(selectedOffer.id);
+      setEditOfferName(selectedOffer.nombre_oferta || '');
+      setEditStartDate(selectedOffer.vigencia_inicio || '');
+      setEditEndDate(selectedOffer.vigencia_fin || '');
+      setIsEditingDates(false);
     }
   }, [selectedOffer]);
 
@@ -63,6 +80,63 @@ export default function Offers() {
   const handleDeleteOffer = async (id) => {
     await deleteDoc(doc(db, 'offers', id));
     fetchOffers();
+  };
+
+  // Guardar fechas y nombre editados dentro de selectedOffer
+  const handleSaveDates = async () => {
+    if (!selectedOffer) return;
+    setIsSavingDates(true);
+    try {
+      const updatedData = {
+        nombre_oferta: editOfferName.trim() || selectedOffer.nombre_oferta,
+        vigencia_inicio: editStartDate,
+        vigencia_fin: editEndDate
+      };
+      await setDoc(doc(db, 'offers', selectedOffer.id), updatedData, { merge: true });
+
+      setSelectedOffer(prev => ({ ...prev, ...updatedData }));
+      setOffers(prev => prev.map(o => o.id === selectedOffer.id ? { ...o, ...updatedData } : o));
+      setIsEditingDates(false);
+    } catch (err) {
+      console.error('Error al actualizar fechas de la oferta:', err);
+      alert('Error al guardar las fechas.');
+    } finally {
+      setIsSavingDates(false);
+    }
+  };
+
+  // Abrir modal de edición desde la grilla de ofertas
+  const openEditModal = (offer) => {
+    setModalEditOffer(offer);
+    setModalOfferName(offer.nombre_oferta || '');
+    setModalStartDate(offer.vigencia_inicio || '');
+    setModalEndDate(offer.vigencia_fin || '');
+  };
+
+  // Guardar cambios desde el modal
+  const handleSaveModalOffer = async (e) => {
+    e.preventDefault();
+    if (!modalEditOffer) return;
+    setIsSavingDates(true);
+    try {
+      const updatedData = {
+        nombre_oferta: modalOfferName.trim() || modalEditOffer.nombre_oferta,
+        vigencia_inicio: modalStartDate,
+        vigencia_fin: modalEndDate
+      };
+      await setDoc(doc(db, 'offers', modalEditOffer.id), updatedData, { merge: true });
+
+      setOffers(prev => prev.map(o => o.id === modalEditOffer.id ? { ...o, ...updatedData } : o));
+      if (selectedOffer && selectedOffer.id === modalEditOffer.id) {
+        setSelectedOffer(prev => ({ ...prev, ...updatedData }));
+      }
+      setModalEditOffer(null);
+    } catch (err) {
+      console.error('Error al actualizar oferta:', err);
+      alert('Error al guardar los cambios de la oferta.');
+    } finally {
+      setIsSavingDates(false);
+    }
   };
 
   const handleProviderCodeChange = async (code) => {
@@ -201,20 +275,113 @@ export default function Offers() {
         <div className="bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-2xl shadow-md p-6 md:p-8 text-white relative overflow-hidden">
           <div className="absolute top-0 right-0 w-64 h-64 bg-white opacity-5 rounded-full -translate-y-1/2 translate-x-1/3"></div>
           <div className="relative z-10">
-            <div className="flex items-center gap-3 mb-3">
-              <span className="bg-white/20 p-2 rounded-xl backdrop-blur-sm"><Tags size={24} /></span>
-              <h2 className="text-2xl md:text-3xl font-bold tracking-tight">{selectedOffer.nombre_oferta}</h2>
-            </div>
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-6 text-indigo-100 mt-6">
-              <div className="flex items-center gap-2 bg-black/10 px-4 py-2 rounded-lg backdrop-blur-sm w-full sm:w-auto">
-                <Calendar size={18} />
-                <span><span className="opacity-70">Inicio:</span> {selectedOffer.vigencia_inicio || 'N/A'}</span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                <span className="bg-white/20 p-2 rounded-xl backdrop-blur-sm shrink-0"><Tags size={24} /></span>
+                {!isEditingDates ? (
+                  <h2 className="text-2xl md:text-3xl font-bold tracking-tight truncate">{selectedOffer.nombre_oferta}</h2>
+                ) : (
+                  <input
+                    type="text"
+                    value={editOfferName}
+                    onChange={(e) => setEditOfferName(e.target.value)}
+                    placeholder="Nombre de la oferta"
+                    className="text-xl md:text-2xl font-bold bg-white/15 border border-white/30 rounded-xl px-3 py-1.5 text-white outline-none focus:bg-white/25 focus:border-white transition-all w-full max-w-md"
+                  />
+                )}
               </div>
-              <div className="flex items-center gap-2 bg-black/10 px-4 py-2 rounded-lg backdrop-blur-sm w-full sm:w-auto">
-                <Calendar size={18} />
-                <span><span className="opacity-70">Fin:</span> {selectedOffer.vigencia_fin || 'N/A'}</span>
-              </div>
+
+              {/* Botones de acción para editar fechas */}
+              {!isEditingDates ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditOfferName(selectedOffer.nombre_oferta || '');
+                    setEditStartDate(selectedOffer.vigencia_inicio || '');
+                    setEditEndDate(selectedOffer.vigencia_fin || '');
+                    setIsEditingDates(true);
+                  }}
+                  className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 backdrop-blur-sm text-white text-xs font-semibold transition-all border border-white/20 shadow-xs cursor-pointer w-fit shrink-0"
+                >
+                  <Edit3 size={15} />
+                  <span>Modificar Fechas</span>
+                </button>
+              ) : (
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleSaveDates}
+                    disabled={isSavingDates}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold transition-all shadow-sm cursor-pointer"
+                  >
+                    <Check size={15} />
+                    <span>{isSavingDates ? 'Guardando...' : 'Guardar Fechas'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingDates(false)}
+                    className="px-3 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs font-semibold transition-all cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              )}
             </div>
+
+            {/* Fechas de vigencia de la oferta */}
+            {!isEditingDates ? (
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-6 text-indigo-100 mt-5">
+                <div 
+                  onClick={() => {
+                    setEditOfferName(selectedOffer.nombre_oferta || '');
+                    setEditStartDate(selectedOffer.vigencia_inicio || '');
+                    setEditEndDate(selectedOffer.vigencia_fin || '');
+                    setIsEditingDates(true);
+                  }}
+                  className="flex items-center gap-2 bg-black/15 hover:bg-black/25 px-4 py-2.5 rounded-xl backdrop-blur-sm w-full sm:w-auto cursor-pointer transition-colors border border-white/10 group"
+                  title="Haz clic para modificar las fechas"
+                >
+                  <Calendar size={18} className="group-hover:text-amber-300 transition-colors" />
+                  <span><span className="opacity-70">Inicio:</span> <strong className="font-semibold">{selectedOffer.vigencia_inicio || 'Sin definir'}</strong></span>
+                  <Edit3 size={13} className="ml-1 opacity-50 group-hover:opacity-100 transition-opacity" />
+                </div>
+                <div 
+                  onClick={() => {
+                    setEditOfferName(selectedOffer.nombre_oferta || '');
+                    setEditStartDate(selectedOffer.vigencia_inicio || '');
+                    setEditEndDate(selectedOffer.vigencia_fin || '');
+                    setIsEditingDates(true);
+                  }}
+                  className="flex items-center gap-2 bg-black/15 hover:bg-black/25 px-4 py-2.5 rounded-xl backdrop-blur-sm w-full sm:w-auto cursor-pointer transition-colors border border-white/10 group"
+                  title="Haz clic para modificar las fechas"
+                >
+                  <Calendar size={18} className="group-hover:text-amber-300 transition-colors" />
+                  <span><span className="opacity-70">Fin:</span> <strong className="font-semibold">{selectedOffer.vigencia_fin || 'Sin definir'}</strong></span>
+                  <Edit3 size={13} className="ml-1 opacity-50 group-hover:opacity-100 transition-opacity" />
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-5 text-white mt-4 bg-black/25 p-4 rounded-xl border border-white/15">
+                <div className="flex items-center gap-2.5 w-full sm:w-auto">
+                  <label className="text-xs font-bold text-indigo-200">Fecha Inicio:</label>
+                  <input
+                    type="date"
+                    value={editStartDate}
+                    onChange={(e) => setEditStartDate(e.target.value)}
+                    className="bg-white text-slate-800 text-xs font-semibold px-3 py-2 rounded-lg outline-none border border-slate-200 shadow-2xs cursor-pointer focus:ring-2 focus:ring-indigo-400"
+                  />
+                </div>
+                <div className="flex items-center gap-2.5 w-full sm:w-auto">
+                  <label className="text-xs font-bold text-indigo-200">Fecha Fin:</label>
+                  <input
+                    type="date"
+                    value={editEndDate}
+                    onChange={(e) => setEditEndDate(e.target.value)}
+                    className="bg-white text-slate-800 text-xs font-semibold px-3 py-2 rounded-lg outline-none border border-slate-200 shadow-2xs cursor-pointer focus:ring-2 focus:ring-indigo-400"
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -561,26 +728,41 @@ export default function Offers() {
                         className="bg-white rounded-2xl shadow-sm hover:shadow-md border border-slate-200/60 p-5 md:p-6 cursor-pointer transition-all duration-200 group relative md:hover:-translate-y-1 flex flex-col h-full"
                       >
                         <div className="flex justify-between items-start mb-4 gap-2">
-                          <h3 className="font-bold text-base md:text-lg text-slate-800 pr-6 leading-tight break-words">{o.nombre_oferta}</h3>
+                          <h3 className="font-bold text-base md:text-lg text-slate-800 pr-14 leading-tight break-words">{o.nombre_oferta}</h3>
                           <span className={`text-[10px] md:text-[11px] font-bold uppercase tracking-wider px-2 md:px-2.5 py-1 rounded-md border shrink-0 ${status.classes}`}>
                             {status.text}
                           </span>
                         </div>
                         
-                        <div className="mt-auto pt-4 border-t border-slate-100 flex items-center gap-4">
-                          <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 font-medium">
+                        <div className="mt-auto pt-4 border-t border-slate-100 flex items-center justify-between gap-3">
+                          <div 
+                            onClick={(e) => { e.stopPropagation(); openEditModal(o); }}
+                            className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 font-medium hover:text-indigo-600 transition-colors p-1 -ml-1 rounded-lg hover:bg-indigo-50/70"
+                            title="Haz clic para modificar las fechas"
+                          >
                             <Calendar size={14} className="text-slate-400"/>
                             <span>{o.vigencia_inicio || '-'}</span> <span className="text-slate-300">→</span> <span>{o.vigencia_fin || '-'}</span>
                           </div>
-                        </div>
 
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); handleDeleteOffer(o.id); }} 
-                          className="absolute top-4 right-4 text-slate-300 hover:text-red-500 md:opacity-0 group-hover:opacity-100 transition-all duration-200 hover:bg-red-50 p-2 rounded-lg"
-                          title="Eliminar oferta"
-                        >
-                          <Trash2 size={16} />
-                        </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); openEditModal(o); }}
+                              className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 p-2 rounded-lg transition-all cursor-pointer"
+                              title="Modificar fechas de esta oferta"
+                            >
+                              <Edit3 size={15} />
+                            </button>
+                            <button 
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handleDeleteOffer(o.id); }} 
+                              className="text-slate-300 hover:text-red-500 hover:bg-red-50 p-2 rounded-lg transition-all cursor-pointer"
+                              title="Eliminar oferta"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     );
                   })}
@@ -589,6 +771,92 @@ export default function Offers() {
             })()}
           </div>
           
+        </div>
+      )}
+
+      {/* Modal para modificar fechas y nombre de la oferta directamente */}
+      {modalEditOffer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200/80 max-w-md w-full p-6 space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-100">
+                  <Calendar size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800 text-base">Modificar Fechas de Oferta</h3>
+                  <p className="text-[11px] text-slate-400">Edita la vigencia y nombre de la campaña</p>
+                </div>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setModalEditOffer(null)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveModalOffer} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Nombre de la Oferta
+                </label>
+                <input
+                  type="text"
+                  value={modalOfferName}
+                  onChange={(e) => setModalOfferName(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 outline-none text-sm font-medium transition-all"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Fecha de Inicio
+                  </label>
+                  <input
+                    type="date"
+                    value={modalStartDate}
+                    onChange={(e) => setModalStartDate(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 outline-none text-xs font-semibold cursor-pointer transition-all"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Fecha de Fin
+                  </label>
+                  <input
+                    type="date"
+                    value={modalEndDate}
+                    onChange={(e) => setModalEndDate(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 outline-none text-xs font-semibold cursor-pointer transition-all"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setModalEditOffer(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingDates}
+                  className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-sm shadow-indigo-200 cursor-pointer disabled:opacity-50"
+                >
+                  <Check size={15} />
+                  <span>{isSavingDates ? 'Guardando...' : 'Guardar Cambios'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>
