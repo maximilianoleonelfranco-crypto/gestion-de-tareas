@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   collection, 
   addDoc, 
@@ -8,7 +8,6 @@ import {
   deleteDoc, 
   query, 
   where, 
-  orderBy, 
   Timestamp 
 } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -27,22 +26,31 @@ import {
   Share2, 
   Printer, 
   X, 
-  AlertCircle, 
   CheckCircle2, 
   ChevronLeft, 
   ChevronRight,
+  ArrowLeft,
   Sparkles,
-  ArrowDownCircle,
-  FileSpreadsheet
+  Layers,
+  FolderPlus,
+  Clock,
+  FileSpreadsheet,
+  ArrowRight
 } from 'lucide-react';
 
-// Nombres de meses en español
+// Las 4 secciones principales solicitadas por la gerencia
+export const DEFAULT_SECTIONS = [
+  { id: 'lacteos', name: 'Autoservice lácteos', icon: '🥛', color: 'bg-sky-50 text-sky-800 border-sky-200' },
+  { id: 'congelados', name: 'Autoservice congelados', icon: '❄️', color: 'bg-cyan-50 text-cyan-800 border-cyan-200' },
+  { id: 'fiambres', name: 'Fiambres', icon: '🥓', color: 'bg-rose-50 text-rose-800 border-rose-200' },
+  { id: 'quesos', name: 'Quesos', icon: '🧀', color: 'bg-amber-50 text-amber-800 border-amber-200' }
+];
+
 const MONTH_NAMES = [
   'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
 ];
 
-// Helper para obtener el mes actual en formato YYYY-MM
 function getCurrentPeriod() {
   const now = new Date();
   const year = now.getFullYear();
@@ -50,7 +58,6 @@ function getCurrentPeriod() {
   return `${year}-${month}`;
 }
 
-// Helper para formatear periodo YYYY-MM a "Noviembre 2026"
 function formatPeriodLabel(periodStr) {
   if (!periodStr) return '';
   const [yearStr, monthStr] = periodStr.split('-');
@@ -59,16 +66,41 @@ function formatPeriodLabel(periodStr) {
   return `${monthName} ${yearStr}`;
 }
 
+function getTodayISO() {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export default function InventoryDifferences() {
   const [selectedPeriod, setSelectedPeriod] = useState(getCurrentPeriod);
-  const [items, setItems] = useState([]);
+  const [inventories, setInventories] = useState([]);
+  const [selectedInventory, setSelectedInventory] = useState(null);
+  const [inventoryItems, setInventoryItems] = useState([]);
   const [productsCatalog, setProductsCatalog] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [filterStatus, setFilterStatus] = useState('pendientes'); // 'pendientes' | 'completadas' | 'todas'
-  const [searchQuery, setSearchQuery] = useState('');
+  const [isLoadingInventories, setIsLoadingInventories] = useState(true);
+  const [isLoadingItems, setIsLoadingItems] = useState(false);
+  const [sectionFilter, setSectionFilter] = useState('todas');
   const [copiedNotification, setCopiedNotification] = useState(false);
 
-  // Formulario de nuevo item
+  // Modal para Crear Nuevo Inventario
+  const [isCreateInvModalOpen, setIsCreateInvModalOpen] = useState(false);
+  const [newInvSection, setNewInvSection] = useState('Autoservice lácteos');
+  const [newInvCustomSection, setNewInvCustomSection] = useState('');
+  const [newInvDate, setNewInvDate] = useState(getTodayISO);
+  const [newInvName, setNewInvName] = useState('');
+  const [newInvNotes, setNewInvNotes] = useState('');
+  const [isCreatingInv, setIsCreatingInv] = useState(false);
+
+  // Modal para Editar Inventario
+  const [editingInventory, setEditingInventory] = useState(null);
+  const [editInvName, setEditInvName] = useState('');
+  const [editInvDate, setEditInvDate] = useState('');
+  const [editInvNotes, setEditInvNotes] = useState('');
+
+  // Formulario para Agregar Producto a la Merma (dentro de un inventario)
   const [newItemCode, setNewItemCode] = useState('');
   const [newItemDesc, setNewItemDesc] = useState('');
   const [newItemQty, setNewItemQty] = useState('');
@@ -77,10 +109,14 @@ export default function InventoryDifferences() {
   const [newProviderCode, setNewProviderCode] = useState('');
   const [newProviderName, setNewProviderName] = useState('');
   const [codeSuggestions, setCodeSuggestions] = useState([]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmittingItem, setIsSubmittingItem] = useState(false);
+
+  // Filtros de artículos dentro del inventario seleccionado
+  const [itemsFilterStatus, setItemsFilterStatus] = useState('pendientes'); // 'pendientes' | 'completadas' | 'todas'
+  const [itemsSearchQuery, setItemsSearchQuery] = useState('');
 
   // Modal para Merma Parcial (descontar de a poco)
-  const [partialDiscountModal, setPartialDiscountModal] = useState(null); // item object
+  const [partialDiscountModal, setPartialDiscountModal] = useState(null);
   const [discountAmount, setDiscountAmount] = useState('');
   const [discountNote, setDiscountNote] = useState('');
   const [isDiscounting, setIsDiscounting] = useState(false);
@@ -96,7 +132,7 @@ export default function InventoryDifferences() {
   // Modal de Historial de Mermas de un item
   const [historyModalItem, setHistoryModalItem] = useState(null);
 
-  // Cargar catálogo de productos para sugerencias y autocompletado
+  // Cargar catálogo de productos para autocompletado
   useEffect(() => {
     const fetchCatalog = async () => {
       try {
@@ -109,35 +145,245 @@ export default function InventoryDifferences() {
     fetchCatalog();
   }, []);
 
-  // Cargar los items de diferencias de inventario del período seleccionado
-  const fetchInventoryItems = async () => {
-    setIsLoading(true);
+  // Cargar la lista de inventarios del período seleccionado
+  const fetchInventories = async () => {
+    setIsLoadingInventories(true);
     try {
-      const q = query(
+      // Traer los inventarios del mes
+      const invQ = query(
+        collection(db, 'inventory_sheets'),
+        where('period', '==', selectedPeriod)
+      );
+      const invSnap = await getDocs(invQ);
+      const invList = invSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      // Traer también todos los items del mes para calcular métricas en tiempo real por inventario
+      const itemsQ = query(
         collection(db, 'inventory_differences'),
         where('period', '==', selectedPeriod)
       );
+      const itemsSnap = await getDocs(itemsQ);
+      const allMonthItems = itemsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      // Vincular métricas a cada inventario
+      const enriched = invList.map(inv => {
+        const matchingItems = allMonthItems.filter(i => i.inventory_id === inv.id);
+        const totalItems = matchingItems.length;
+        const pendingCount = matchingItems.filter(i => (i.cantidad_actual || 0) > 0).length;
+        const completedCount = matchingItems.filter(i => (i.cantidad_actual || 0) <= 0).length;
+        const totalPendingQty = matchingItems.reduce((acc, i) => acc + (parseFloat(i.cantidad_actual) || 0), 0);
+        const totalShrinkedQty = matchingItems.reduce((acc, i) => acc + (parseFloat(i.cantidad_mermada) || 0), 0);
+        const totalInitialQty = matchingItems.reduce((acc, i) => acc + (parseFloat(i.cantidad_inicial) || 0), 0);
+        const progress = totalInitialQty > 0 ? Math.round((totalShrinkedQty / totalInitialQty) * 100) : (totalItems > 0 && pendingCount === 0 ? 100 : 0);
+
+        return {
+          ...inv,
+          totalItems,
+          pendingCount,
+          completedCount,
+          totalPendingQty,
+          totalShrinkedQty,
+          progress
+        };
+      });
+
+      // Ordenar por fecha desc
+      enriched.sort((a, b) => (b.fecha_inventario || '').localeCompare(a.fecha_inventario || ''));
+      setInventories(enriched);
+
+      // Si teníamos un inventario seleccionado, actualizarlo
+      if (selectedInventory) {
+        const updatedSelected = enriched.find(i => i.id === selectedInventory.id);
+        if (updatedSelected) {
+          setSelectedInventory(updatedSelected);
+        }
+      }
+    } catch (err) {
+      console.error('Error al cargar inventarios:', err);
+    } finally {
+      setIsLoadingInventories(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchInventories();
+  }, [selectedPeriod]);
+
+  // Cargar items del inventario seleccionado
+  const fetchItemsOfInventory = async (invId) => {
+    if (!invId) return;
+    setIsLoadingItems(true);
+    try {
+      const q = query(
+        collection(db, 'inventory_differences'),
+        where('inventory_id', '==', invId)
+      );
       const snap = await getDocs(q);
       const loaded = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      // Ordenar por fecha de creación desc
       loaded.sort((a, b) => {
         const tA = a.created_at?.seconds || 0;
         const tB = b.created_at?.seconds || 0;
         return tB - tA;
       });
-      setItems(loaded);
+      setInventoryItems(loaded);
     } catch (err) {
-      console.error('Error al cargar diferencias de inventario:', err);
+      console.error('Error al cargar items del inventario:', err);
     } finally {
-      setIsLoading(false);
+      setIsLoadingItems(false);
     }
   };
 
   useEffect(() => {
-    fetchInventoryItems();
-  }, [selectedPeriod]);
+    if (selectedInventory) {
+      fetchItemsOfInventory(selectedInventory.id);
+    } else {
+      setInventoryItems([]);
+    }
+  }, [selectedInventory?.id]);
 
-  // Manejar cambio en el código para sugerencias y autocompletar
+  // Autogenerar nombre de inventario al cambiar sección o mes
+  useEffect(() => {
+    const secName = newInvSection === 'Otra' ? (newInvCustomSection || 'Sección') : newInvSection;
+    setNewInvName(`Inventario ${secName} - ${formatPeriodLabel(selectedPeriod)}`);
+  }, [newInvSection, newInvCustomSection, selectedPeriod]);
+
+  // Crear nuevo inventario
+  const handleCreateInventory = async (e) => {
+    e.preventDefault();
+    const finalSection = newInvSection === 'Otra' ? (newInvCustomSection.trim() || 'Otra') : newInvSection;
+    const finalName = newInvName.trim() || `Inventario ${finalSection} - ${formatPeriodLabel(selectedPeriod)}`;
+
+    setIsCreatingInv(true);
+    try {
+      const docRef = await addDoc(collection(db, 'inventory_sheets'), {
+        period: selectedPeriod,
+        period_label: formatPeriodLabel(selectedPeriod),
+        seccion: finalSection,
+        nombre: finalName,
+        fecha_inventario: newInvDate,
+        observaciones: newInvNotes.trim(),
+        estado: 'abierto',
+        created_at: Timestamp.now(),
+        updated_at: Timestamp.now()
+      });
+
+      setIsCreateInvModalOpen(false);
+      setNewInvNotes('');
+      await fetchInventories();
+
+      // Abrir automáticamente el inventario recién creado
+      setSelectedInventory({
+        id: docRef.id,
+        period: selectedPeriod,
+        period_label: formatPeriodLabel(selectedPeriod),
+        seccion: finalSection,
+        nombre: finalName,
+        fecha_inventario: newInvDate,
+        observaciones: newInvNotes.trim(),
+        totalItems: 0,
+        pendingCount: 0,
+        completedCount: 0,
+        totalPendingQty: 0,
+        totalShrinkedQty: 0,
+        progress: 0
+      });
+    } catch (err) {
+      console.error('Error al crear inventario:', err);
+      alert('Error al crear inventario.');
+    } finally {
+      setIsCreatingInv(false);
+    }
+  };
+
+  // Crear inventario rápido para una sección específica
+  const handleQuickCreateSectionInventory = async (secName) => {
+    try {
+      const finalName = `Inventario ${secName} - ${formatPeriodLabel(selectedPeriod)}`;
+      const docRef = await addDoc(collection(db, 'inventory_sheets'), {
+        period: selectedPeriod,
+        period_label: formatPeriodLabel(selectedPeriod),
+        seccion: secName,
+        nombre: finalName,
+        fecha_inventario: getTodayISO(),
+        observaciones: '',
+        estado: 'abierto',
+        created_at: Timestamp.now(),
+        updated_at: Timestamp.now()
+      });
+
+      await fetchInventories();
+      setSelectedInventory({
+        id: docRef.id,
+        period: selectedPeriod,
+        period_label: formatPeriodLabel(selectedPeriod),
+        seccion: secName,
+        nombre: finalName,
+        fecha_inventario: getTodayISO(),
+        observaciones: '',
+        totalItems: 0,
+        pendingCount: 0,
+        completedCount: 0,
+        totalPendingQty: 0,
+        totalShrinkedQty: 0,
+        progress: 0
+      });
+    } catch (err) {
+      console.error('Error al crear inventario rápido:', err);
+      alert('Error al crear inventario.');
+    }
+  };
+
+  // Guardar edición de datos del inventario
+  const handleSaveEditInventory = async (e) => {
+    e.preventDefault();
+    if (!editingInventory) return;
+    try {
+      const invRef = doc(db, 'inventory_sheets', editingInventory.id);
+      await updateDoc(invRef, {
+        nombre: editInvName.trim() || editingInventory.nombre,
+        fecha_inventario: editInvDate,
+        observaciones: editInvNotes.trim(),
+        updated_at: Timestamp.now()
+      });
+
+      setEditingInventory(null);
+      await fetchInventories();
+    } catch (err) {
+      console.error('Error al editar inventario:', err);
+      alert('Error al guardar cambios.');
+    }
+  };
+
+  // Eliminar un inventario completo y sus items
+  const handleDeleteInventory = async (inv) => {
+    if (!window.confirm(`¿Estás seguro de eliminar el "${inv.nombre}" y todos sus artículos registrados?`)) {
+      return;
+    }
+    try {
+      // 1. Eliminar documento del inventario
+      await deleteDoc(doc(db, 'inventory_sheets', inv.id));
+
+      // 2. Eliminar los items de este inventario
+      const itemsQ = query(
+        collection(db, 'inventory_differences'),
+        where('inventory_id', '==', inv.id)
+      );
+      const itemsSnap = await getDocs(itemsQ);
+      for (const d of itemsSnap.docs) {
+        await deleteDoc(doc(db, 'inventory_differences', d.id));
+      }
+
+      if (selectedInventory && selectedInventory.id === inv.id) {
+        setSelectedInventory(null);
+      }
+      fetchInventories();
+    } catch (err) {
+      console.error('Error al eliminar inventario:', err);
+      alert('Error al eliminar inventario.');
+    }
+  };
+
+  // Manejar búsqueda de código de producto con sugerencias
   const handleCodeChange = (val) => {
     setNewItemCode(val);
     if (!val.trim()) {
@@ -152,7 +398,6 @@ export default function InventoryDifferences() {
 
     setCodeSuggestions(matches);
 
-    // Si coincide exactamente con uno, rellenar descripción
     const exact = productsCatalog.find(p => (p.codigo_articulo || p.id || '').toLowerCase() === clean);
     if (exact) {
       if (exact.descripcion) setNewItemDesc(exact.descripcion);
@@ -169,9 +414,11 @@ export default function InventoryDifferences() {
     setCodeSuggestions([]);
   };
 
-  // Crear nuevo registro de diferencia de inventario
-  const handleAddItem = async (e) => {
+  // Agregar producto a la lista de mermas del inventario seleccionado
+  const handleAddItemToInventory = async (e) => {
     e.preventDefault();
+    if (!selectedInventory) return;
+
     const qtyNum = parseFloat(newItemQty);
     if (isNaN(qtyNum) || qtyNum <= 0) {
       alert('Ingresa una cantidad válida mayor a 0 (puedes usar decimales, ej: 1.5).');
@@ -182,9 +429,12 @@ export default function InventoryDifferences() {
       return;
     }
 
-    setIsSubmitting(true);
+    setIsSubmittingItem(true);
     try {
       const docData = {
+        inventory_id: selectedInventory.id,
+        inventory_name: selectedInventory.nombre,
+        seccion: selectedInventory.seccion,
         period: selectedPeriod,
         period_label: formatPeriodLabel(selectedPeriod),
         codigo_articulo: newItemCode.trim(),
@@ -192,17 +442,17 @@ export default function InventoryDifferences() {
         codigo_proveedor: newProviderCode.trim(),
         nombre_proveedor: newProviderName.trim(),
         cantidad_inicial: qtyNum,
-        cantidad_actual: qtyNum, // Lo que resta mermar
+        cantidad_actual: qtyNum, // Cantidad pendiente de mermar
         cantidad_mermada: 0,
         unidad: newItemUnit,
         nota: newItemNote.trim(),
-        estado: 'pendiente', // 'pendiente' | 'en_proceso' | 'completada'
+        estado: 'pendiente',
         historial: [
           {
             fecha: new Date().toISOString(),
             tipo: 'registro_inicial',
             cantidad_inicial: qtyNum,
-            nota: 'Inventario inicial registrado'
+            nota: `Registrado en ${selectedInventory.nombre}`
           }
         ],
         created_at: Timestamp.now(),
@@ -211,7 +461,6 @@ export default function InventoryDifferences() {
 
       await addDoc(collection(db, 'inventory_differences'), docData);
 
-      // Limpiar formulario
       setNewItemCode('');
       setNewItemDesc('');
       setNewItemQty('');
@@ -220,22 +469,23 @@ export default function InventoryDifferences() {
       setNewProviderName('');
       setCodeSuggestions([]);
 
-      fetchInventoryItems();
+      fetchItemsOfInventory(selectedInventory.id);
+      fetchInventories();
     } catch (err) {
-      console.error('Error al guardar diferencia de inventario:', err);
-      alert('Error al guardar. Revisa tu conexión.');
+      console.error('Error al agregar producto al inventario:', err);
+      alert('Error al guardar el producto.');
     } finally {
-      setIsSubmitting(false);
+      setIsSubmittingItem(false);
     }
   };
 
-  // Registrar merma parcial (descontar de a poco)
+  // Merma Parcial (descontar de a poco)
   const handleApplyPartialDiscount = async (e) => {
     e.preventDefault();
     if (!partialDiscountModal) return;
     const discountNum = parseFloat(discountAmount);
     if (isNaN(discountNum) || discountNum <= 0) {
-      alert('Ingresa una cantidad a descontar válida mayor a 0.');
+      alert('Ingresa una cantidad válida mayor a 0.');
       return;
     }
 
@@ -261,21 +511,22 @@ export default function InventoryDifferences() {
         nota: discountNote.trim() || 'Merma parcial aplicada'
       };
 
-      const updatedHistory = [...(partialDiscountModal.historial || []), newHistoryEntry];
-
       const itemRef = doc(db, 'inventory_differences', partialDiscountModal.id);
       await updateDoc(itemRef, {
         cantidad_actual: newPending,
         cantidad_mermada: parseFloat(alreadyDiscounted.toFixed(3)),
         estado: isCompleted ? 'completada' : 'en_proceso',
-        historial: updatedHistory,
+        historial: [...(partialDiscountModal.historial || []), newHistoryEntry],
         updated_at: Timestamp.now()
       });
 
       setPartialDiscountModal(null);
       setDiscountAmount('');
       setDiscountNote('');
-      fetchInventoryItems();
+      if (selectedInventory) {
+        fetchItemsOfInventory(selectedInventory.id);
+      }
+      fetchInventories();
     } catch (err) {
       console.error('Error al aplicar merma parcial:', err);
       alert('Error al descontar la cantidad.');
@@ -284,7 +535,7 @@ export default function InventoryDifferences() {
     }
   };
 
-  // Mermar todo de una vez (completar)
+  // Mermar todo (completar a saldo 0)
   const handleMarkAsCompleted = async (item) => {
     if (!window.confirm(`¿Confirmas que ya mermaste la totalidad restante (${item.cantidad_actual} ${item.unidad}) de "${item.descripcion}"?`)) {
       return;
@@ -311,13 +562,16 @@ export default function InventoryDifferences() {
         updated_at: Timestamp.now()
       });
 
-      fetchInventoryItems();
+      if (selectedInventory) {
+        fetchItemsOfInventory(selectedInventory.id);
+      }
+      fetchInventories();
     } catch (err) {
       console.error('Error al completar merma:', err);
     }
   };
 
-  // Edición directa rápida de la cantidad pendiente en línea
+  // Edición directa rápida inline de la cantidad
   const handleQuickInlineUpdate = async (item, newQuantityValue) => {
     const valNum = parseFloat(newQuantityValue);
     if (isNaN(valNum) || valNum < 0) return;
@@ -335,7 +589,7 @@ export default function InventoryDifferences() {
         tipo: 'ajuste_manual',
         cantidad_anterior: prevPending,
         cantidad_restante: valNum,
-        nota: 'Ajuste manual de cantidad pendiente'
+        nota: 'Ajuste manual de saldo pendiente'
       };
 
       const itemRef = doc(db, 'inventory_differences', item.id);
@@ -347,14 +601,17 @@ export default function InventoryDifferences() {
         updated_at: Timestamp.now()
       });
 
-      fetchInventoryItems();
+      if (selectedInventory) {
+        fetchItemsOfInventory(selectedInventory.id);
+      }
+      fetchInventories();
     } catch (err) {
       console.error('Error al actualizar cantidad inline:', err);
     }
   };
 
-  // Abrir modal de edición completa
-  const handleOpenEdit = (item) => {
+  // Editar datos completos de un producto
+  const handleOpenEditItem = (item) => {
     setEditingItem(item);
     setEditDesc(item.descripcion || '');
     setEditPendingQty(String(item.cantidad_actual ?? ''));
@@ -363,8 +620,7 @@ export default function InventoryDifferences() {
     setEditNote(item.nota || '');
   };
 
-  // Guardar edición completa
-  const handleSaveEdit = async (e) => {
+  const handleSaveEditItem = async (e) => {
     e.preventDefault();
     if (!editingItem) return;
 
@@ -393,27 +649,33 @@ export default function InventoryDifferences() {
       });
 
       setEditingItem(null);
-      fetchInventoryItems();
+      if (selectedInventory) {
+        fetchItemsOfInventory(selectedInventory.id);
+      }
+      fetchInventories();
     } catch (err) {
-      console.error('Error al guardar edición:', err);
+      console.error('Error al guardar edición de artículo:', err);
       alert('Error al guardar los cambios.');
     }
   };
 
-  // Eliminar item de la lista
+  // Eliminar un producto del inventario
   const handleDeleteItem = async (id, desc) => {
-    if (!window.confirm(`¿Estás seguro de eliminar "${desc}" del listado de inventario de este mes?`)) {
+    if (!window.confirm(`¿Estás seguro de eliminar "${desc}" de este inventario?`)) {
       return;
     }
     try {
       await deleteDoc(doc(db, 'inventory_differences', id));
-      fetchInventoryItems();
+      if (selectedInventory) {
+        fetchItemsOfInventory(selectedInventory.id);
+      }
+      fetchInventories();
     } catch (err) {
       console.error('Error al eliminar item:', err);
     }
   };
 
-  // Navegar entre meses
+  // Navegación de mes
   const changeMonth = (offset) => {
     const [yearStr, monthStr] = selectedPeriod.split('-');
     let year = parseInt(yearStr, 10);
@@ -428,37 +690,48 @@ export default function InventoryDifferences() {
     }
 
     setSelectedPeriod(`${year}-${String(month).padStart(2, '0')}`);
+    setSelectedInventory(null);
   };
 
   // Copiar reporte para WhatsApp
   const handleCopyWhatsAppReport = () => {
     const periodName = formatPeriodLabel(selectedPeriod);
-    let text = `📦 *DIFERENCIAS DE INVENTARIO - ${periodName.toUpperCase()}*\n`;
-    text += `Control y seguimiento de mermas mensuales\n`;
-    text += `─────────────────────────\n\n`;
+    let text = ``;
 
-    const pendingItems = items.filter(i => (i.cantidad_actual || 0) > 0);
-    const completedItems = items.filter(i => (i.cantidad_actual || 0) <= 0);
+    if (selectedInventory) {
+      text += `📦 *DIFERENCIAS DE INVENTARIO - ${selectedInventory.seccion.toUpperCase()}*\n`;
+      text += `Inventario: *${selectedInventory.nombre}*\n`;
+      text += `Mes: ${periodName} • Fecha: ${selectedInventory.fecha_inventario || 'N/A'}\n`;
+      text += `─────────────────────────\n\n`;
 
-    if (pendingItems.length > 0) {
-      text += `⏳ *PENDIENTES DE MERMAR (${pendingItems.length}):*\n`;
-      pendingItems.forEach(i => {
-        text += `• *${i.codigo_articulo || 'S/C'}* - ${i.descripcion}\n`;
-        text += `  Falta mermar: *${i.cantidad_actual} ${i.unidad}* (Inicial: ${i.cantidad_inicial} ${i.unidad})\n`;
+      const pendingItems = inventoryItems.filter(i => (i.cantidad_actual || 0) > 0);
+      const completedItems = inventoryItems.filter(i => (i.cantidad_actual || 0) <= 0);
+
+      if (pendingItems.length > 0) {
+        text += `⏳ *PENDIENTES DE MERMAR (${pendingItems.length}):*\n`;
+        pendingItems.forEach(i => {
+          text += `• *${i.codigo_articulo || 'S/C'}* - ${i.descripcion}\n`;
+          text += `  Falta mermar: *${i.cantidad_actual} ${i.unidad}* (Inicial: ${i.cantidad_inicial} ${i.unidad})\n`;
+        });
+        text += `\n`;
+      }
+
+      if (completedItems.length > 0) {
+        text += `✅ *MERMAS YA COMPLETADAS (${completedItems.length}):*\n`;
+        completedItems.forEach(i => {
+          text += `• *${i.codigo_articulo || 'S/C'}* - ${i.descripcion} (${i.cantidad_inicial} ${i.unidad})\n`;
+        });
+        text += `\n`;
+      }
+    } else {
+      text += `📦 *RESUMEN DE INVENTARIOS Y MERMAS - ${periodName.toUpperCase()}*\n`;
+      text += `─────────────────────────\n\n`;
+      inventories.forEach(inv => {
+        text += `🏷️ *${inv.nombre}* (${inv.seccion}):\n`;
+        text += `  • Artículos: ${inv.totalItems || 0} (${inv.pendingCount || 0} pendientes)\n`;
+        text += `  • Saldo por mermar: *${inv.totalPendingQty || 0}*\n`;
+        text += `  • Ya mermado: ${inv.totalShrinkedQty || 0} (${inv.progress || 0}% avance)\n\n`;
       });
-      text += `\n`;
-    }
-
-    if (completedItems.length > 0) {
-      text += `✅ *MERMAS YA COMPLETADAS (${completedItems.length}):*\n`;
-      completedItems.forEach(i => {
-        text += `• *${i.codigo_articulo || 'S/C'}* - ${i.descripcion} (${i.cantidad_inicial} ${i.unidad})\n`;
-      });
-      text += `\n`;
-    }
-
-    if (items.length === 0) {
-      text += `No hay diferencias registradas para este mes.\n`;
     }
 
     navigator.clipboard.writeText(text);
@@ -466,14 +739,20 @@ export default function InventoryDifferences() {
     setTimeout(() => setCopiedNotification(false), 3000);
   };
 
-  // Filtrado de items
-  const filteredItems = items.filter(item => {
-    const isPending = (item.cantidad_actual || 0) > 0;
-    if (filterStatus === 'pendientes' && !isPending) return false;
-    if (filterStatus === 'completadas' && isPending) return false;
+  // Filtrado de inventarios por sección
+  const displayedInventories = inventories.filter(inv => {
+    if (sectionFilter === 'todas') return true;
+    return inv.seccion === sectionFilter;
+  });
 
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
+  // Filtrado de items del inventario seleccionado
+  const displayedItems = inventoryItems.filter(item => {
+    const isPending = (item.cantidad_actual || 0) > 0;
+    if (itemsFilterStatus === 'pendientes' && !isPending) return false;
+    if (itemsFilterStatus === 'completadas' && isPending) return false;
+
+    if (itemsSearchQuery.trim()) {
+      const q = itemsSearchQuery.toLowerCase();
       const codeMatch = (item.codigo_articulo || '').toLowerCase().includes(q);
       const descMatch = (item.descripcion || '').toLowerCase().includes(q);
       const provMatch = (item.nombre_proveedor || '').toLowerCase().includes(q);
@@ -482,19 +761,25 @@ export default function InventoryDifferences() {
     return true;
   });
 
-  // Métricas del mes
-  const totalItemsCount = items.length;
-  const pendingCount = items.filter(i => (i.cantidad_actual || 0) > 0).length;
-  const completedCount = items.filter(i => (i.cantidad_actual || 0) <= 0).length;
-  const totalPendingUnits = items.reduce((acc, i) => acc + (parseFloat(i.cantidad_actual) || 0), 0);
-  const totalShrinkedUnits = items.reduce((acc, i) => acc + (parseFloat(i.cantidad_mermada) || 0), 0);
-  const totalInitialUnits = items.reduce((acc, i) => acc + (parseFloat(i.cantidad_inicial) || 0), 0);
-  const progressPercent = totalInitialUnits > 0 ? Math.round((totalShrinkedUnits / totalInitialUnits) * 100) : 0;
+  // Helper para color y emoji de sección
+  const getSectionBadge = (seccionName) => {
+    const found = DEFAULT_SECTIONS.find(s => s.name.toLowerCase() === (seccionName || '').toLowerCase());
+    if (found) {
+      return {
+        icon: found.icon,
+        classes: found.color
+      };
+    }
+    return {
+      icon: '📁',
+      classes: 'bg-indigo-50 text-indigo-800 border-indigo-200'
+    };
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in duration-200">
       
-      {/* Header y Selector de Mes */}
+      {/* Encabezado Superior y Navegación de Mes */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200/60 p-5 md:p-6 flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 bg-gradient-to-tr from-amber-500 to-amber-600 rounded-2xl flex items-center justify-center text-white shadow-md shadow-amber-200 shrink-0">
@@ -504,20 +789,23 @@ export default function InventoryDifferences() {
             <h2 className="text-xl md:text-2xl font-bold text-slate-800 tracking-tight flex items-center gap-2">
               <span>Diferencias de Inventarios</span>
               <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-amber-50 text-amber-700 border border-amber-200/60">
-                Mermas
+                4 Secciones
               </span>
             </h2>
             <p className="text-xs md:text-sm text-slate-500 mt-0.5">
-              Control de artículos a mermar de a poco en el mes
+              Control y mermas por sección: Autoservice lácteos, congelados, fiambres y quesos
             </p>
           </div>
         </div>
 
-        {/* Controles de Navegación de Mes */}
+        {/* Controles de Período / Mes y Botón Nuevo Inventario */}
         <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto justify-between xl:justify-end">
           <button
             type="button"
-            onClick={() => setSelectedPeriod(getCurrentPeriod())}
+            onClick={() => {
+              setSelectedPeriod(getCurrentPeriod());
+              setSelectedInventory(null);
+            }}
             className={`px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               selectedPeriod === getCurrentPeriod()
                 ? 'bg-amber-100 text-amber-800 border border-amber-200'
@@ -569,450 +857,211 @@ export default function InventoryDifferences() {
             <span>{copiedNotification ? '¡Copiado!' : 'Reporte WhatsApp'}</span>
           </button>
 
+          {/* Botón para Crear Nuevo Inventario */}
           <button
             type="button"
-            onClick={() => window.print()}
-            className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold border border-slate-200/60 transition-all cursor-pointer print:hidden"
-            title="Imprimir listado del mes"
+            onClick={() => setIsCreateInvModalOpen(true)}
+            className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm shadow-indigo-200 cursor-pointer"
           >
-            <Printer size={14} />
-            <span className="hidden sm:inline">Imprimir</span>
+            <FolderPlus size={15} />
+            <span>+ Nuevo Inventario</span>
           </button>
         </div>
       </div>
 
-      {/* Tarjetas Bento Grid de Métricas del Mes */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-        <div className="bg-white p-4 rounded-2xl border border-slate-200/60 shadow-2xs">
-          <div className="flex items-center justify-between text-slate-400 mb-1">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Artículos</span>
-            <Package size={16} className="text-amber-500" />
-          </div>
-          <div className="text-xl md:text-2xl font-black text-slate-800">{totalItemsCount}</div>
-          <div className="text-[11px] text-slate-400 mt-0.5">
-            {pendingCount} pendientes • {completedCount} listos
-          </div>
-        </div>
-
-        <div className="bg-white p-4 rounded-2xl border border-slate-200/60 shadow-2xs">
-          <div className="flex items-center justify-between text-slate-400 mb-1">
-            <span className="text-xs font-bold uppercase tracking-wider text-amber-700">Por Mermar</span>
-            <TrendingDown size={16} className="text-amber-600" />
-          </div>
-          <div className="text-xl md:text-2xl font-black text-amber-600">
-            {totalPendingUnits.toFixed(2).replace(/\.00$/, '')}
-          </div>
-          <div className="text-[11px] text-amber-700/80 mt-0.5">Cantidad pendiente de baja</div>
-        </div>
-
-        <div className="bg-white p-4 rounded-2xl border border-slate-200/60 shadow-2xs">
-          <div className="flex items-center justify-between text-slate-400 mb-1">
-            <span className="text-xs font-bold uppercase tracking-wider text-emerald-700">Ya Mermado</span>
-            <CheckCircle2 size={16} className="text-emerald-500" />
-          </div>
-          <div className="text-xl md:text-2xl font-black text-emerald-600">
-            {totalShrinkedUnits.toFixed(2).replace(/\.00$/, '')}
-          </div>
-          <div className="text-[11px] text-emerald-700/80 mt-0.5">Descontado este mes</div>
-        </div>
-
-        <div className="bg-white p-4 rounded-2xl border border-slate-200/60 shadow-2xs">
-          <div className="flex items-center justify-between text-slate-400 mb-1">
-            <span className="text-xs font-bold uppercase tracking-wider text-indigo-700">Progreso</span>
-            <Sparkles size={16} className="text-indigo-500" />
-          </div>
-          <div className="text-xl md:text-2xl font-black text-indigo-700">{progressPercent}%</div>
-          <div className="w-full bg-slate-100 rounded-full h-1.5 mt-2 overflow-hidden">
-            <div 
-              className="bg-indigo-600 h-1.5 rounded-full transition-all duration-500"
-              style={{ width: `${Math.min(100, progressPercent)}%` }}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Grid Principal: Formulario a la izquierda (o arriba en mobile) y Listado a la derecha */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-        
-        {/* Panel Formulario Agregar Producto al Mes */}
-        <div className="xl:col-span-4 bg-white rounded-2xl shadow-sm border border-slate-200/60 p-5 md:p-6 space-y-4">
-          <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-            <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
-              <Plus size={18} />
-            </div>
-            <div>
-              <h3 className="font-bold text-slate-800 text-sm md:text-base">Agregar Producto al Inventario</h3>
-              <p className="text-[11px] text-slate-400">
-                Corresponde a: <strong>{formatPeriodLabel(selectedPeriod)}</strong>
-              </p>
-            </div>
-          </div>
-
-          <form onSubmit={handleAddItem} className="space-y-3.5">
-            {/* Código de Artículo con autocompletado */}
-            <div className="relative">
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Código de Artículo
-              </label>
-              <input
-                type="text"
-                value={newItemCode}
-                onChange={(e) => handleCodeChange(e.target.value)}
-                placeholder="Ej: 243313 o busca por nombre..."
-                className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 outline-none font-mono text-xs font-semibold text-slate-800"
-              />
-
-              {/* Menú de sugerencias si tipea código o nombre */}
-              {codeSuggestions.length > 0 && (
-                <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-20 max-h-48 overflow-y-auto divide-y divide-slate-100 p-1">
-                  {codeSuggestions.map((sug) => (
-                    <button
-                      key={sug.id}
-                      type="button"
-                      onClick={() => handleSelectSuggestion(sug)}
-                      className="w-full text-left p-2 hover:bg-amber-50 rounded-lg text-xs transition-colors flex items-center justify-between gap-2"
-                    >
-                      <div className="min-w-0">
-                        <span className="font-mono font-bold text-amber-700 block truncate">
-                          {sug.codigo_articulo || sug.id}
-                        </span>
-                        <span className="text-[11px] text-slate-600 truncate block">
-                          {sug.descripcion}
-                        </span>
-                      </div>
-                      {sug.nombre_proveedor && (
-                        <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded shrink-0">
-                          {sug.nombre_proveedor}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Descripción del Producto */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Descripción del Producto
-              </label>
-              <input
-                type="text"
-                value={newItemDesc}
-                onChange={(e) => setNewItemDesc(e.target.value)}
-                placeholder="Ej: Jamón cocido extra Schneck"
-                className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 outline-none text-xs text-slate-800 font-medium"
-                required
-              />
-            </div>
-
-            {/* Cantidad inicial a mermar y Unidad */}
-            <div className="grid grid-cols-3 gap-2">
-              <div className="col-span-2">
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Cantidad a Mermar
-                </label>
-                <input
-                  type="number"
-                  step="any"
-                  value={newItemQty}
-                  onChange={(e) => setNewItemQty(e.target.value)}
-                  placeholder="Ej: 5 o 2.500"
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 outline-none font-mono text-sm font-bold text-amber-700"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Unidad
-                </label>
-                <select
-                  value={newItemUnit}
-                  onChange={(e) => setNewItemUnit(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 outline-none text-xs font-semibold text-slate-700 cursor-pointer"
-                >
-                  <option value="u">u (unid)</option>
-                  <option value="kg">kg</option>
-                  <option value="g">gramos</option>
-                  <option value="lt">litros</option>
-                  <option value="pq">paquetes</option>
-                  <option value="cj">cajas</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Observaciones / Motivo */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Motivo / Observación <span className="font-normal text-slate-400">(Opcional)</span>
-              </label>
-              <input
-                type="text"
-                value={newItemNote}
-                onChange={(e) => setNewItemNote(e.target.value)}
-                placeholder="Ej: Vencimiento 15/11, rotura de frío, faltante..."
-                className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 outline-none text-xs text-slate-700"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 transition-all shadow-sm shadow-amber-200 cursor-pointer disabled:opacity-50"
-            >
-              {isSubmitting ? (
-                <span>Guardando...</span>
-              ) : (
-                <>
-                  <Plus size={16} />
-                  <span>Agregar al Inventario del Mes</span>
-                </>
-              )}
-            </button>
-          </form>
-        </div>
-
-        {/* Panel Listado de Productos y Mermas */}
-        <div className="xl:col-span-8 space-y-4">
+      {/* ========================================================================= */}
+      {/* VISTA 1: LISTADO DE INVENTARIOS DE LAS SECCIONES (SI NO HAY UNO ABIERTO) */}
+      {/* ========================================================================= */}
+      {!selectedInventory ? (
+        <div className="space-y-6">
           
-          {/* Barra de Filtros y Búsqueda */}
-          <div className="bg-white p-3.5 rounded-2xl border border-slate-200/60 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl text-xs font-semibold w-full sm:w-auto">
+          {/* Filtro por Sección */}
+          <div className="flex items-center justify-between flex-wrap gap-3 bg-white p-3 rounded-2xl border border-slate-200/60 shadow-2xs">
+            <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl text-xs font-semibold overflow-x-auto no-scrollbar w-full sm:w-auto">
               <button
                 type="button"
-                onClick={() => setFilterStatus('pendientes')}
-                className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                  filterStatus === 'pendientes'
-                    ? 'bg-white text-amber-700 shadow-2xs font-bold'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                Pendientes ({pendingCount})
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterStatus('completadas')}
-                className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                  filterStatus === 'completadas'
-                    ? 'bg-white text-emerald-700 shadow-2xs font-bold'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                Completadas ({completedCount})
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterStatus('todas')}
-                className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                  filterStatus === 'todas'
+                onClick={() => setSectionFilter('todas')}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+                  sectionFilter === 'todas'
                     ? 'bg-white text-indigo-700 shadow-2xs font-bold'
                     : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
-                Todas ({totalItemsCount})
+                Todas las Secciones ({inventories.length})
               </button>
-            </div>
 
-            <div className="relative w-full sm:w-64">
-              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Buscar por código o producto..."
-                className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-slate-700"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                >
-                  <X size={13} />
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Listado de Productos */}
-          {isLoading ? (
-            <div className="p-16 text-center bg-white rounded-2xl border border-slate-200/60 shadow-2xs">
-              <div className="w-10 h-10 border-4 border-amber-200 border-t-amber-600 rounded-full animate-spin mx-auto mb-3" />
-              <p className="text-xs font-semibold text-slate-500">Cargando inventario de {formatPeriodLabel(selectedPeriod)}...</p>
-            </div>
-          ) : filteredItems.length === 0 ? (
-            <div className="p-12 text-center bg-white rounded-2xl border border-slate-200/60 shadow-2xs text-slate-400">
-              <Scale size={44} className="mx-auto mb-3 text-slate-300 opacity-60" />
-              <p className="text-base font-bold text-slate-700">
-                {searchQuery ? 'No se encontraron artículos con esa búsqueda' : `No hay diferencias registradas en ${formatPeriodLabel(selectedPeriod)}`}
-              </p>
-              <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-                {filterStatus === 'completadas'
-                  ? 'Aún no has completado mermas este mes.'
-                  : 'Agrega los productos que presentan diferencias para ir mermando de a poco durante el mes.'}
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {filteredItems.map((item) => {
-                const isPending = (item.cantidad_actual || 0) > 0;
-                const percentDone = item.cantidad_inicial > 0
-                  ? Math.min(100, Math.round(((item.cantidad_mermada || 0) / item.cantidad_inicial) * 100))
-                  : (isPending ? 0 : 100);
-
+              {DEFAULT_SECTIONS.map((sec) => {
+                const count = inventories.filter(i => i.seccion === sec.name).length;
                 return (
-                  <div
-                    key={item.id}
-                    className={`bg-white rounded-2xl border transition-all p-4 md:p-5 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4 ${
-                      !isPending 
-                        ? 'border-emerald-200/80 bg-emerald-50/20' 
-                        : 'border-slate-200/80 hover:border-amber-300'
+                  <button
+                    key={sec.id}
+                    type="button"
+                    onClick={() => setSectionFilter(sec.name)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+                      sectionFilter === sec.name
+                        ? 'bg-white text-slate-800 shadow-2xs font-bold'
+                        : 'text-slate-500 hover:text-slate-800'
                     }`}
                   >
-                    {/* Información del Producto */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        {item.codigo_articulo && (
-                          <span className="font-mono font-bold text-xs px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
-                            {item.codigo_articulo}
+                    <span>{sec.icon}</span>
+                    <span>{sec.name}</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200/60 text-slate-600">
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <span className="text-xs text-slate-400 font-medium px-2 hidden sm:inline">
+              Mes: {formatPeriodLabel(selectedPeriod)}
+            </span>
+          </div>
+
+          {/* Tarjetas Bento Grid de los Inventarios Creados */}
+          {isLoadingInventories ? (
+            <div className="p-16 text-center bg-white rounded-2xl border border-slate-200/60 shadow-2xs">
+              <div className="w-10 h-10 border-4 border-amber-200 border-t-amber-600 rounded-full animate-spin mx-auto mb-3" />
+              <p className="text-xs font-semibold text-slate-500">Cargando inventarios de {formatPeriodLabel(selectedPeriod)}...</p>
+            </div>
+          ) : displayedInventories.length === 0 ? (
+            <div className="p-12 text-center bg-white rounded-2xl border border-slate-200/60 shadow-2xs space-y-4">
+              <div className="w-16 h-16 rounded-3xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto shadow-inner">
+                <FolderPlus size={32} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">
+                  No hay inventarios creados en {formatPeriodLabel(selectedPeriod)}
+                </h3>
+                <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
+                  Crea los inventarios para tus secciones para comenzar a registrar las diferencias y mermar de a poco.
+                </p>
+              </div>
+
+              {/* Botones de creación rápida para cada sección */}
+              <div className="pt-2 flex flex-wrap justify-center gap-2 max-w-xl mx-auto">
+                {DEFAULT_SECTIONS.map((sec) => (
+                  <button
+                    key={sec.id}
+                    type="button"
+                    onClick={() => handleQuickCreateSectionInventory(sec.name)}
+                    className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl border border-slate-200 hover:border-amber-300 bg-slate-50 hover:bg-amber-50/50 text-slate-700 text-xs font-semibold transition-all cursor-pointer shadow-2xs"
+                  >
+                    <span>{sec.icon}</span>
+                    <span>Crear Inventario de {sec.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
+              {displayedInventories.map((inv) => {
+                const secBadge = getSectionBadge(inv.seccion);
+                return (
+                  <div
+                    key={inv.id}
+                    onClick={() => setSelectedInventory(inv)}
+                    className="bg-white rounded-2xl shadow-sm hover:shadow-md border border-slate-200/70 p-5 md:p-6 cursor-pointer transition-all duration-200 hover:-translate-y-0.5 group relative flex flex-col justify-between"
+                  >
+                    <div>
+                      {/* Cabecera de la tarjeta */}
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1.5 ${secBadge.classes}`}>
+                            <span>{secBadge.icon}</span>
+                            <span>{inv.seccion}</span>
                           </span>
-                        )}
-                        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border ${
-                          !isPending
-                            ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                            : (item.cantidad_mermada > 0
-                              ? 'bg-amber-100 text-amber-800 border-amber-200'
-                              : 'bg-rose-50 text-rose-700 border-rose-200')
-                        }`}>
-                          {!isPending ? '✓ Mermado Total' : (item.cantidad_mermada > 0 ? 'En Proceso' : 'Pendiente')}
-                        </span>
-                        {item.nombre_proveedor && (
-                          <span className="text-[10px] text-slate-400 font-medium">
-                            • {item.nombre_proveedor}
-                          </span>
-                        )}
+                        </div>
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingInventory(inv);
+                              setEditInvName(inv.nombre);
+                              setEditInvDate(inv.fecha_inventario || '');
+                              setEditInvNotes(inv.observaciones || '');
+                            }}
+                            className="p-1.5 text-slate-300 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                            title="Editar datos del inventario"
+                          >
+                            <Edit3 size={15} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteInventory(inv);
+                            }}
+                            className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                            title="Eliminar este inventario"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
                       </div>
 
-                      <h4 className="font-bold text-sm md:text-base text-slate-800 leading-snug break-words">
-                        {item.descripcion}
-                      </h4>
+                      {/* Nombre y fecha del inventario */}
+                      <h3 className="font-bold text-base md:text-lg text-slate-800 leading-snug group-hover:text-indigo-600 transition-colors">
+                        {inv.nombre}
+                      </h3>
 
-                      {item.nota && (
-                        <p className="text-[11px] text-slate-500 mt-1 italic">
-                          Nota: {item.nota}
+                      <div className="flex items-center gap-2 text-xs text-slate-400 mt-1.5">
+                        <Calendar size={13} />
+                        <span>Fecha: {inv.fecha_inventario || 'Sin fecha'}</span>
+                        <span>•</span>
+                        <span>{formatPeriodLabel(inv.period)}</span>
+                      </div>
+
+                      {inv.observaciones && (
+                        <p className="text-xs text-slate-500 mt-2 line-clamp-1 italic">
+                          "{inv.observaciones}"
                         </p>
                       )}
-
-                      {/* Barra de progreso de la merma */}
-                      <div className="mt-3 flex items-center gap-2 max-w-xs">
-                        <div className="flex-1 bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                          <div 
-                            className={`h-1.5 rounded-full transition-all duration-300 ${
-                              !isPending ? 'bg-emerald-500' : 'bg-amber-500'
-                            }`}
-                            style={{ width: `${percentDone}%` }}
-                          />
-                        </div>
-                        <span className="text-[10px] font-bold text-slate-400 font-mono">
-                          {percentDone}%
-                        </span>
-                      </div>
                     </div>
 
-                    {/* Controles de Cantidad y Mermas (El corazón de la funcionalidad) */}
-                    <div className="flex flex-wrap md:flex-nowrap items-center gap-3 pt-3 md:pt-0 border-t md:border-t-0 border-slate-100 shrink-0">
-                      
-                      {/* Caja de Cantidad Pendiente con Edición Rápida */}
-                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col items-center min-w-[120px]">
-                        <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
-                          Falta Mermar
-                        </span>
-                        <div className="flex items-center gap-1 mt-0.5">
-                          <input
-                            type="number"
-                            step="any"
-                            defaultValue={item.cantidad_actual}
-                            key={`${item.id}-${item.cantidad_actual}`}
-                            onBlur={(e) => handleQuickInlineUpdate(item, e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.currentTarget.blur();
-                              }
-                            }}
-                            className="w-16 text-center font-mono font-black text-sm bg-white border border-slate-200 rounded-lg p-1 outline-none text-amber-700 focus:ring-2 focus:ring-amber-500"
-                            title="Haz clic para modificar la cantidad directamente"
-                          />
-                          <span className="text-xs font-bold text-slate-600">{item.unidad}</span>
+                    {/* Métricas y Estado del inventario */}
+                    <div className="mt-5 pt-4 border-t border-slate-100 space-y-3">
+                      <div className="grid grid-cols-3 gap-2 text-center">
+                        <div className="bg-slate-50 p-2 rounded-xl border border-slate-100">
+                          <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Artículos</span>
+                          <span className="block text-sm font-bold text-slate-700">{inv.totalItems || 0}</span>
                         </div>
-                        <span className="text-[9px] text-slate-400 mt-0.5">
-                          Inicial: {item.cantidad_inicial} {item.unidad}
-                        </span>
+                        <div className="bg-amber-50/70 p-2 rounded-xl border border-amber-100">
+                          <span className="block text-[10px] font-bold text-amber-700 uppercase tracking-wider">Por Mermar</span>
+                          <span className="block text-sm font-bold text-amber-700">
+                            {(inv.totalPendingQty || 0).toFixed(2).replace(/\.00$/, '')}
+                          </span>
+                        </div>
+                        <div className="bg-emerald-50/70 p-2 rounded-xl border border-emerald-100">
+                          <span className="block text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Mermado</span>
+                          <span className="block text-sm font-bold text-emerald-700">
+                            {(inv.totalShrinkedQty || 0).toFixed(2).replace(/\.00$/, '')}
+                          </span>
+                        </div>
                       </div>
 
-                      {/* Botón Acción Merma Parcial (-X) */}
-                      {isPending ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPartialDiscountModal(item);
-                            setDiscountAmount('');
-                            setDiscountNote('');
-                          }}
-                          className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all shadow-xs shadow-amber-200 cursor-pointer"
-                          title="Descontar una cantidad que mermas hoy"
-                        >
-                          <Minus size={14} />
-                          <span>Mermar Parcial</span>
-                        </button>
-                      ) : (
-                        <div className="flex items-center gap-1 text-emerald-700 bg-emerald-100/60 px-3 py-2 rounded-xl text-xs font-bold">
-                          <Check size={14} />
-                          <span>Completado</span>
+                      {/* Progreso visual y botón entrar */}
+                      <div className="flex items-center justify-between gap-3 pt-1">
+                        <div className="flex-1">
+                          <div className="flex justify-between text-[10px] font-bold text-slate-400 mb-1">
+                            <span>Avance de mermas</span>
+                            <span>{inv.progress || 0}%</span>
+                          </div>
+                          <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                            <div 
+                              className="bg-indigo-600 h-1.5 rounded-full transition-all duration-500"
+                              style={{ width: `${Math.min(100, inv.progress || 0)}%` }}
+                            />
+                          </div>
                         </div>
-                      )}
 
-                      {/* Botón Completar Todo */}
-                      {isPending && (
-                        <button
-                          type="button"
-                          onClick={() => handleMarkAsCompleted(item)}
-                          className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-xl transition-colors border border-emerald-200 cursor-pointer"
-                          title="Marcar como mermado total (0 restante)"
-                        >
-                          <Check size={16} />
-                        </button>
-                      )}
-
-                      {/* Botón Historial de mermas de este producto */}
-                      <button
-                        type="button"
-                        onClick={() => setHistoryModalItem(item)}
-                        className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors cursor-pointer"
-                        title="Ver bitácora de mermas"
-                      >
-                        <History size={16} />
-                      </button>
-
-                      {/* Botón Editar completo */}
-                      <button
-                        type="button"
-                        onClick={() => handleOpenEdit(item)}
-                        className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
-                        title="Modificar datos del artículo"
-                      >
-                        <Edit3 size={16} />
-                      </button>
-
-                      {/* Botón Eliminar */}
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteItem(item.id, item.descripcion)}
-                        className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors cursor-pointer"
-                        title="Eliminar del inventario"
-                      >
-                        <Trash2 size={16} />
-                      </button>
+                        <div className="flex items-center gap-1 text-xs font-bold text-indigo-600 group-hover:translate-x-1 transition-transform shrink-0 pl-3">
+                          <span>Abrir</span>
+                          <ArrowRight size={14} />
+                        </div>
+                      </div>
                     </div>
                   </div>
                 );
@@ -1020,7 +1069,669 @@ export default function InventoryDifferences() {
             </div>
           )}
         </div>
-      </div>
+      ) : (
+        /* ========================================================================= */
+        /* VISTA 2: DENTRO DE UN INVENTARIO SELECCIONADO (GESTIÓN DE PRODUCTOS/MERMAS) */
+        /* ========================================================================= */
+        <div className="space-y-6">
+          
+          {/* Botón Volver al Listado de Inventarios */}
+          <button 
+            type="button"
+            onClick={() => setSelectedInventory(null)} 
+            className="flex items-center gap-2 text-slate-500 hover:text-indigo-600 transition-colors font-medium px-2 py-1 rounded-lg hover:bg-indigo-50 w-fit cursor-pointer"
+          >
+            <ArrowLeft size={18} />
+            <span>Volver a Inventarios del Mes</span>
+          </button>
+
+          {/* Banner Principal del Inventario Seleccionado */}
+          <div className="bg-gradient-to-br from-slate-800 to-indigo-900 rounded-2xl shadow-md p-6 md:p-8 text-white relative overflow-hidden">
+            <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="bg-white/20 px-3 py-1 rounded-xl text-xs font-bold backdrop-blur-sm flex items-center gap-1.5">
+                    <span>{getSectionBadge(selectedInventory.seccion).icon}</span>
+                    <span>{selectedInventory.seccion}</span>
+                  </span>
+                  <span className="text-white/60 text-xs">
+                    • Período: {formatPeriodLabel(selectedInventory.period)}
+                  </span>
+                </div>
+                
+                <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight">
+                  {selectedInventory.nombre}
+                </h2>
+
+                <div className="flex items-center gap-3 text-white/80 text-xs">
+                  <Calendar size={14} />
+                  <span>Fecha de Inventario: <strong>{selectedInventory.fecha_inventario || 'Sin definir'}</strong></span>
+                </div>
+              </div>
+
+              {/* Métricas rápidas en el banner */}
+              <div className="grid grid-cols-3 gap-3 bg-black/20 p-3 rounded-xl backdrop-blur-sm shrink-0 text-center">
+                <div className="px-2">
+                  <span className="block text-[10px] text-white/70 uppercase font-bold">Artículos</span>
+                  <span className="text-lg font-black">{inventoryItems.length}</span>
+                </div>
+                <div className="px-2 border-x border-white/10">
+                  <span className="block text-[10px] text-amber-300 uppercase font-bold">Por Mermar</span>
+                  <span className="text-lg font-black text-amber-300">
+                    {inventoryItems.reduce((acc, i) => acc + (parseFloat(i.cantidad_actual) || 0), 0).toFixed(2).replace(/\.00$/, '')}
+                  </span>
+                </div>
+                <div className="px-2">
+                  <span className="block text-[10px] text-emerald-300 uppercase font-bold">Mermado</span>
+                  <span className="text-lg font-black text-emerald-300">
+                    {inventoryItems.reduce((acc, i) => acc + (parseFloat(i.cantidad_mermada) || 0), 0).toFixed(2).replace(/\.00$/, '')}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Grid de Contenido: Formulario Agregar Producto + Lista de Mermas */}
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+            
+            {/* Panel Formulario: Agregar Producto a este Inventario */}
+            <div className="xl:col-span-4 bg-white rounded-2xl shadow-sm border border-slate-200/60 p-5 md:p-6 space-y-4">
+              <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
+                  <Plus size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800 text-sm md:text-base">Añadir Producto a Mermar</h3>
+                  <p className="text-[11px] text-slate-400">
+                    Sección: <strong>{selectedInventory.seccion}</strong>
+                  </p>
+                </div>
+              </div>
+
+              <form onSubmit={handleAddItemToInventory} className="space-y-3.5">
+                {/* Código de Artículo con autocompletado */}
+                <div className="relative">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Código de Artículo
+                  </label>
+                  <input
+                    type="text"
+                    value={newItemCode}
+                    onChange={(e) => handleCodeChange(e.target.value)}
+                    placeholder="Ej: 243313 o busca por nombre..."
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 outline-none font-mono text-xs font-semibold text-slate-800"
+                  />
+
+                  {codeSuggestions.length > 0 && (
+                    <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-20 max-h-48 overflow-y-auto divide-y divide-slate-100 p-1">
+                      {codeSuggestions.map((sug) => (
+                        <button
+                          key={sug.id}
+                          type="button"
+                          onClick={() => handleSelectSuggestion(sug)}
+                          className="w-full text-left p-2 hover:bg-amber-50 rounded-lg text-xs transition-colors flex items-center justify-between gap-2"
+                        >
+                          <div className="min-w-0">
+                            <span className="font-mono font-bold text-amber-700 block truncate">
+                              {sug.codigo_articulo || sug.id}
+                            </span>
+                            <span className="text-[11px] text-slate-600 truncate block">
+                              {sug.descripcion}
+                            </span>
+                          </div>
+                          {sug.nombre_proveedor && (
+                            <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded shrink-0">
+                              {sug.nombre_proveedor}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Descripción del Producto */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Descripción del Producto
+                  </label>
+                  <input
+                    type="text"
+                    value={newItemDesc}
+                    onChange={(e) => setNewItemDesc(e.target.value)}
+                    placeholder="Ej: Jamón cocido extra Schneck"
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 outline-none text-xs text-slate-800 font-medium"
+                    required
+                  />
+                </div>
+
+                {/* Cantidad inicial a mermar (admite decimales) y Unidad */}
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="col-span-2">
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Cantidad a Mermar
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      value={newItemQty}
+                      onChange={(e) => setNewItemQty(e.target.value)}
+                      placeholder="Ej: 5 o 2.500"
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 outline-none font-mono text-sm font-bold text-amber-700"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Unidad
+                    </label>
+                    <select
+                      value={newItemUnit}
+                      onChange={(e) => setNewItemUnit(e.target.value)}
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 outline-none text-xs font-semibold text-slate-700 cursor-pointer"
+                    >
+                      <option value="u">u (unid)</option>
+                      <option value="kg">kg</option>
+                      <option value="g">gramos</option>
+                      <option value="lt">litros</option>
+                      <option value="pq">paquetes</option>
+                      <option value="cj">cajas</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Observación / Motivo */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Motivo / Observación <span className="font-normal text-slate-400">(Opcional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={newItemNote}
+                    onChange={(e) => setNewItemNote(e.target.value)}
+                    placeholder="Ej: Vencimiento 15/11, rotura..."
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 outline-none text-xs text-slate-700"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSubmittingItem}
+                  className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 transition-all shadow-sm shadow-amber-200 cursor-pointer disabled:opacity-50"
+                >
+                  {isSubmittingItem ? (
+                    <span>Guardando...</span>
+                  ) : (
+                    <>
+                      <Plus size={16} />
+                      <span>Agregar al Inventario</span>
+                    </>
+                  )}
+                </button>
+              </form>
+            </div>
+
+            {/* Panel Listado de Productos de este Inventario */}
+            <div className="xl:col-span-8 space-y-4">
+              
+              {/* Barra de Filtros y Búsqueda */}
+              <div className="bg-white p-3.5 rounded-2xl border border-slate-200/60 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl text-xs font-semibold w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => setItemsFilterStatus('pendientes')}
+                    className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      itemsFilterStatus === 'pendientes'
+                        ? 'bg-white text-amber-700 shadow-2xs font-bold'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    Pendientes ({inventoryItems.filter(i => (i.cantidad_actual || 0) > 0).length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setItemsFilterStatus('completadas')}
+                    className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      itemsFilterStatus === 'completadas'
+                        ? 'bg-white text-emerald-700 shadow-2xs font-bold'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    Completadas ({inventoryItems.filter(i => (i.cantidad_actual || 0) <= 0).length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setItemsFilterStatus('todas')}
+                    className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      itemsFilterStatus === 'todas'
+                        ? 'bg-white text-indigo-700 shadow-2xs font-bold'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    Todas ({inventoryItems.length})
+                  </button>
+                </div>
+
+                <div className="relative w-full sm:w-64">
+                  <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={itemsSearchQuery}
+                    onChange={(e) => setItemsSearchQuery(e.target.value)}
+                    placeholder="Buscar código o descripción..."
+                    className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-slate-700"
+                  />
+                  {itemsSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setItemsSearchQuery('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Items del Inventario */}
+              {isLoadingItems ? (
+                <div className="p-16 text-center bg-white rounded-2xl border border-slate-200/60 shadow-2xs">
+                  <div className="w-10 h-10 border-4 border-amber-200 border-t-amber-600 rounded-full animate-spin mx-auto mb-3" />
+                  <p className="text-xs font-semibold text-slate-500">Cargando productos de {selectedInventory.nombre}...</p>
+                </div>
+              ) : displayedItems.length === 0 ? (
+                <div className="p-12 text-center bg-white rounded-2xl border border-slate-200/60 shadow-2xs text-slate-400">
+                  <Scale size={44} className="mx-auto mb-3 text-slate-300 opacity-60" />
+                  <p className="text-base font-bold text-slate-700">
+                    {itemsSearchQuery ? 'No se encontraron artículos con esa búsqueda' : 'No hay productos registrados en este inventario'}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                    Utiliza el formulario lateral para añadir los artículos que presentan diferencias en esta sección.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {displayedItems.map((item) => {
+                    const isPending = (item.cantidad_actual || 0) > 0;
+                    const percentDone = item.cantidad_inicial > 0
+                      ? Math.min(100, Math.round(((item.cantidad_mermada || 0) / item.cantidad_inicial) * 100))
+                      : (isPending ? 0 : 100);
+
+                    return (
+                      <div
+                        key={item.id}
+                        className={`bg-white rounded-2xl border transition-all p-4 md:p-5 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+                          !isPending 
+                            ? 'border-emerald-200/80 bg-emerald-50/20' 
+                            : 'border-slate-200/80 hover:border-amber-300'
+                        }`}
+                      >
+                        {/* Información del Producto */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            {item.codigo_articulo && (
+                              <span className="font-mono font-bold text-xs px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
+                                {item.codigo_articulo}
+                              </span>
+                            )}
+                            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border ${
+                              !isPending
+                                ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                                : (item.cantidad_mermada > 0
+                                  ? 'bg-amber-100 text-amber-800 border-amber-200'
+                                  : 'bg-rose-50 text-rose-700 border-rose-200')
+                            }`}>
+                              {!isPending ? '✓ Mermado Total' : (item.cantidad_mermada > 0 ? 'En Proceso' : 'Pendiente')}
+                            </span>
+                            {item.nombre_proveedor && (
+                              <span className="text-[10px] text-slate-400 font-medium">
+                                • {item.nombre_proveedor}
+                              </span>
+                            )}
+                          </div>
+
+                          <h4 className="font-bold text-sm md:text-base text-slate-800 leading-snug break-words">
+                            {item.descripcion}
+                          </h4>
+
+                          {item.nota && (
+                            <p className="text-[11px] text-slate-500 mt-1 italic">
+                              Nota: {item.nota}
+                            </p>
+                          )}
+
+                          {/* Barra de progreso de la merma */}
+                          <div className="mt-3 flex items-center gap-2 max-w-xs">
+                            <div className="flex-1 bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                              <div 
+                                className={`h-1.5 rounded-full transition-all duration-300 ${
+                                  !isPending ? 'bg-emerald-500' : 'bg-amber-500'
+                                }`}
+                                style={{ width: `${percentDone}%` }}
+                              />
+                            </div>
+                            <span className="text-[10px] font-bold text-slate-400 font-mono">
+                              {percentDone}%
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Controles de Cantidad y Mermas */}
+                        <div className="flex flex-wrap md:flex-nowrap items-center gap-3 pt-3 md:pt-0 border-t md:border-t-0 border-slate-100 shrink-0">
+                          
+                          {/* Caja de Cantidad Pendiente con Edición Rápida */}
+                          <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col items-center min-w-[120px]">
+                            <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                              Falta Mermar
+                            </span>
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <input
+                                type="number"
+                                step="any"
+                                defaultValue={item.cantidad_actual}
+                                key={`${item.id}-${item.cantidad_actual}`}
+                                onBlur={(e) => handleQuickInlineUpdate(item, e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.currentTarget.blur();
+                                  }
+                                }}
+                                className="w-16 text-center font-mono font-black text-sm bg-white border border-slate-200 rounded-lg p-1 outline-none text-amber-700 focus:ring-2 focus:ring-amber-500"
+                                title="Haz clic para modificar la cantidad directamente"
+                              />
+                              <span className="text-xs font-bold text-slate-600">{item.unidad}</span>
+                            </div>
+                            <span className="text-[9px] text-slate-400 mt-0.5">
+                              Inicial: {item.cantidad_inicial} {item.unidad}
+                            </span>
+                          </div>
+
+                          {/* Botón Acción Merma Parcial */}
+                          {isPending ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPartialDiscountModal(item);
+                                setDiscountAmount('');
+                                setDiscountNote('');
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all shadow-xs shadow-amber-200 cursor-pointer"
+                              title="Descontar una cantidad que mermas hoy"
+                            >
+                              <Minus size={14} />
+                              <span>Mermar Parcial</span>
+                            </button>
+                          ) : (
+                            <div className="flex items-center gap-1 text-emerald-700 bg-emerald-100/60 px-3 py-2 rounded-xl text-xs font-bold">
+                              <Check size={14} />
+                              <span>Completado</span>
+                            </div>
+                          )}
+
+                          {/* Botón Completar Todo */}
+                          {isPending && (
+                            <button
+                              type="button"
+                              onClick={() => handleMarkAsCompleted(item)}
+                              className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-xl transition-colors border border-emerald-200 cursor-pointer"
+                              title="Marcar como mermado total (0 restante)"
+                            >
+                              <Check size={16} />
+                            </button>
+                          )}
+
+                          {/* Historial de mermas */}
+                          <button
+                            type="button"
+                            onClick={() => setHistoryModalItem(item)}
+                            className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors cursor-pointer"
+                            title="Ver bitácora de mermas de este producto"
+                          >
+                            <History size={16} />
+                          </button>
+
+                          {/* Editar completo */}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditItem(item)}
+                            className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                            title="Modificar datos del artículo"
+                          >
+                            <Edit3 size={16} />
+                          </button>
+
+                          {/* Eliminar */}
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteItem(item.id, item.descripcion)}
+                            className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors cursor-pointer"
+                            title="Eliminar del inventario"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODALES DEL SISTEMA                                                        */}
+      {/* ========================================================================= */}
+
+      {/* MODAL: Crear Nuevo Inventario */}
+      {isCreateInvModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200/80 max-w-lg w-full p-6 space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-100">
+                  <FolderPlus size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800 text-base">Crear Nuevo Inventario</h3>
+                  <p className="text-[11px] text-slate-400">
+                    Mes: <strong>{formatPeriodLabel(selectedPeriod)}</strong>
+                  </p>
+                </div>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setIsCreateInvModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateInventory} className="space-y-4">
+              {/* Selector de Sección */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                  Selecciona la Sección
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {DEFAULT_SECTIONS.map((sec) => (
+                    <button
+                      key={sec.id}
+                      type="button"
+                      onClick={() => setNewInvSection(sec.name)}
+                      className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                        newInvSection === sec.name
+                          ? 'border-indigo-600 bg-indigo-50/70 text-indigo-700 ring-2 ring-indigo-500/20'
+                          : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span className="text-base">{sec.icon}</span>
+                      <span className="truncate">{sec.name}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewInvSection('Otra')}
+                    className={`w-full py-1.5 px-3 rounded-lg text-xs font-medium border text-left cursor-pointer transition-all ${
+                      newInvSection === 'Otra'
+                        ? 'border-indigo-600 bg-indigo-50 text-indigo-700'
+                        : 'border-dashed border-slate-200 text-slate-500 hover:bg-slate-50'
+                    }`}
+                  >
+                    + Otra sección personalizada...
+                  </button>
+                  {newInvSection === 'Otra' && (
+                    <input
+                      type="text"
+                      value={newInvCustomSection}
+                      onChange={(e) => setNewInvCustomSection(e.target.value)}
+                      placeholder="Escribe el nombre de la sección..."
+                      className="w-full mt-1.5 p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-semibold text-slate-800"
+                      autoFocus
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* Fecha y Nombre del Inventario */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Fecha de Realización
+                  </label>
+                  <input
+                    type="date"
+                    value={newInvDate}
+                    onChange={(e) => setNewInvDate(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 cursor-pointer"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Nombre del Inventario
+                  </label>
+                  <input
+                    type="text"
+                    value={newInvName}
+                    onChange={(e) => setNewInvName(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Observaciones */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Observaciones / Notas <span className="font-normal text-slate-400">(Opcional)</span>
+                </label>
+                <textarea
+                  value={newInvNotes}
+                  onChange={(e) => setNewInvNotes(e.target.value)}
+                  placeholder="Ej: Conteo realizado por turno mañana, revisar fiambrería..."
+                  rows={2}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 outline-none resize-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsCreateInvModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingInv}
+                  className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-sm shadow-indigo-200 cursor-pointer disabled:opacity-50"
+                >
+                  <Check size={15} />
+                  <span>{isCreatingInv ? 'Creando...' : 'Crear y Abrir'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Editar Inventario */}
+      {editingInventory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200/80 max-w-md w-full p-6 space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Edit3 size={18} className="text-slate-600" />
+                <h3 className="font-bold text-slate-800 text-base">Modificar Inventario</h3>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setEditingInventory(null)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditInventory} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Nombre</label>
+                <input
+                  type="text"
+                  value={editInvName}
+                  onChange={(e) => setEditInvName(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Fecha</label>
+                <input
+                  type="date"
+                  value={editInvDate}
+                  onChange={(e) => setEditInvDate(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Observaciones</label>
+                <textarea
+                  value={editInvNotes}
+                  onChange={(e) => setEditInvNotes(e.target.value)}
+                  rows={2}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 outline-none resize-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingInventory(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white"
+                >
+                  Guardar Cambios
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* MODAL: Mermar Parcial (Descontar de a poco) */}
       {partialDiscountModal && (
@@ -1139,7 +1850,7 @@ export default function InventoryDifferences() {
               </button>
             </div>
 
-            <form onSubmit={handleSaveEdit} className="space-y-3.5">
+            <form onSubmit={handleSaveEditItem} className="space-y-3.5">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">Descripción</label>
                 <input
