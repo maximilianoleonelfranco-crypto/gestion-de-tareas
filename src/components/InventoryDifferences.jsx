@@ -4,6 +4,7 @@ import {
   addDoc, 
   getDocs, 
   doc, 
+  setDoc,
   updateDoc, 
   deleteDoc, 
   query, 
@@ -35,7 +36,8 @@ import {
   FolderPlus,
   Clock,
   FileSpreadsheet,
-  ArrowRight
+  ArrowRight,
+  Settings2
 } from 'lucide-react';
 
 // Las 4 secciones principales solicitadas por la gerencia
@@ -89,16 +91,21 @@ export default function InventoryDifferences() {
   const [isCreateInvModalOpen, setIsCreateInvModalOpen] = useState(false);
   const [newInvSection, setNewInvSection] = useState('Autoservice lácteos');
   const [newInvCustomSection, setNewInvCustomSection] = useState('');
+  const [newInvPeriod, setNewInvPeriod] = useState(getCurrentPeriod);
   const [newInvDate, setNewInvDate] = useState(getTodayISO);
   const [newInvName, setNewInvName] = useState('');
   const [newInvNotes, setNewInvNotes] = useState('');
   const [isCreatingInv, setIsCreatingInv] = useState(false);
 
-  // Modal para Editar Inventario
+  // Modal para Editar Inventario Completo (incluyendo el mes)
   const [editingInventory, setEditingInventory] = useState(null);
   const [editInvName, setEditInvName] = useState('');
+  const [editInvSection, setEditInvSection] = useState('Autoservice lácteos');
+  const [editInvCustomSection, setEditInvCustomSection] = useState('');
+  const [editInvPeriod, setEditInvPeriod] = useState(getCurrentPeriod);
   const [editInvDate, setEditInvDate] = useState('');
   const [editInvNotes, setEditInvNotes] = useState('');
+  const [isSavingInv, setIsSavingInv] = useState(false);
 
   // Formulario para Agregar Producto a la Merma (dentro de un inventario)
   const [newItemCode, setNewItemCode] = useState('');
@@ -149,7 +156,6 @@ export default function InventoryDifferences() {
   const fetchInventories = async () => {
     setIsLoadingInventories(true);
     try {
-      // Traer los inventarios del mes
       const invQ = query(
         collection(db, 'inventory_sheets'),
         where('period', '==', selectedPeriod)
@@ -157,7 +163,6 @@ export default function InventoryDifferences() {
       const invSnap = await getDocs(invQ);
       const invList = invSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-      // Traer también todos los items del mes para calcular métricas en tiempo real por inventario
       const itemsQ = query(
         collection(db, 'inventory_differences'),
         where('period', '==', selectedPeriod)
@@ -187,11 +192,9 @@ export default function InventoryDifferences() {
         };
       });
 
-      // Ordenar por fecha desc
       enriched.sort((a, b) => (b.fecha_inventario || '').localeCompare(a.fecha_inventario || ''));
       setInventories(enriched);
 
-      // Si teníamos un inventario seleccionado, actualizarlo
       if (selectedInventory) {
         const updatedSelected = enriched.find(i => i.id === selectedInventory.id);
         if (updatedSelected) {
@@ -241,23 +244,35 @@ export default function InventoryDifferences() {
     }
   }, [selectedInventory?.id]);
 
-  // Autogenerar nombre de inventario al cambiar sección o mes
+  // Autogenerar nombre de inventario al cambiar sección o mes en modal crear
   useEffect(() => {
     const secName = newInvSection === 'Otra' ? (newInvCustomSection || 'Sección') : newInvSection;
-    setNewInvName(`Inventario ${secName} - ${formatPeriodLabel(selectedPeriod)}`);
-  }, [newInvSection, newInvCustomSection, selectedPeriod]);
+    setNewInvName(`Inventario ${secName} - ${formatPeriodLabel(newInvPeriod)}`);
+  }, [newInvSection, newInvCustomSection, newInvPeriod]);
+
+  // Abrir modal de creación sincronizado con el período activo
+  const handleOpenCreateModal = () => {
+    setNewInvPeriod(selectedPeriod);
+    setNewInvDate(getTodayISO());
+    setNewInvSection('Autoservice lácteos');
+    setNewInvCustomSection('');
+    setNewInvNotes('');
+    setIsCreateInvModalOpen(true);
+  };
 
   // Crear nuevo inventario
   const handleCreateInventory = async (e) => {
     e.preventDefault();
     const finalSection = newInvSection === 'Otra' ? (newInvCustomSection.trim() || 'Otra') : newInvSection;
-    const finalName = newInvName.trim() || `Inventario ${finalSection} - ${formatPeriodLabel(selectedPeriod)}`;
+    const finalPeriod = newInvPeriod || selectedPeriod;
+    const finalPeriodLabel = formatPeriodLabel(finalPeriod);
+    const finalName = newInvName.trim() || `Inventario ${finalSection} - ${finalPeriodLabel}`;
 
     setIsCreatingInv(true);
     try {
       const docRef = await addDoc(collection(db, 'inventory_sheets'), {
-        period: selectedPeriod,
-        period_label: formatPeriodLabel(selectedPeriod),
+        period: finalPeriod,
+        period_label: finalPeriodLabel,
         seccion: finalSection,
         nombre: finalName,
         fecha_inventario: newInvDate,
@@ -269,13 +284,19 @@ export default function InventoryDifferences() {
 
       setIsCreateInvModalOpen(false);
       setNewInvNotes('');
-      await fetchInventories();
+
+      // Si el mes creado no es el actual seleccionado, mover la vista a ese mes
+      if (finalPeriod !== selectedPeriod) {
+        setSelectedPeriod(finalPeriod);
+      } else {
+        await fetchInventories();
+      }
 
       // Abrir automáticamente el inventario recién creado
       setSelectedInventory({
         id: docRef.id,
-        period: selectedPeriod,
-        period_label: formatPeriodLabel(selectedPeriod),
+        period: finalPeriod,
+        period_label: finalPeriodLabel,
         seccion: finalSection,
         nombre: finalName,
         fecha_inventario: newInvDate,
@@ -333,24 +354,95 @@ export default function InventoryDifferences() {
     }
   };
 
-  // Guardar edición de datos del inventario
+  // Abrir modal de edición de inventario completo
+  const openEditInventory = (inv) => {
+    setEditingInventory(inv);
+    setEditInvName(inv.nombre || '');
+    setEditInvDate(inv.fecha_inventario || '');
+    setEditInvPeriod(inv.period || selectedPeriod);
+    setEditInvNotes(inv.observaciones || '');
+
+    const isDefault = DEFAULT_SECTIONS.some(s => s.name === inv.seccion);
+    if (isDefault) {
+      setEditInvSection(inv.seccion);
+      setEditInvCustomSection('');
+    } else {
+      setEditInvSection('Otra');
+      setEditInvCustomSection(inv.seccion || '');
+    }
+  };
+
+  // Guardar edición de datos del inventario (incluyendo mes/período en cascada)
   const handleSaveEditInventory = async (e) => {
     e.preventDefault();
     if (!editingInventory) return;
+
+    setIsSavingInv(true);
     try {
+      const finalSection = editInvSection === 'Otra' ? (editInvCustomSection.trim() || 'Otra') : editInvSection;
+      const finalPeriod = editInvPeriod || editingInventory.period;
+      const finalPeriodLabel = formatPeriodLabel(finalPeriod);
+      const finalName = editInvName.trim() || `Inventario ${finalSection} - ${finalPeriodLabel}`;
+
       const invRef = doc(db, 'inventory_sheets', editingInventory.id);
       await updateDoc(invRef, {
-        nombre: editInvName.trim() || editingInventory.nombre,
+        nombre: finalName,
+        seccion: finalSection,
+        period: finalPeriod,
+        period_label: finalPeriodLabel,
         fecha_inventario: editInvDate,
         observaciones: editInvNotes.trim(),
         updated_at: Timestamp.now()
       });
 
+      // Si el período, sección o nombre cambiaron, actualizar en cascada todos los items asociados a este inventario
+      if (
+        finalPeriod !== editingInventory.period ||
+        finalSection !== editingInventory.seccion ||
+        finalName !== editingInventory.nombre
+      ) {
+        const itemsQ = query(
+          collection(db, 'inventory_differences'),
+          where('inventory_id', '==', editingInventory.id)
+        );
+        const itemsSnap = await getDocs(itemsQ);
+        for (const itemDoc of itemsSnap.docs) {
+          await updateDoc(doc(db, 'inventory_differences', itemDoc.id), {
+            period: finalPeriod,
+            period_label: finalPeriodLabel,
+            seccion: finalSection,
+            inventory_name: finalName,
+            updated_at: Timestamp.now()
+          });
+        }
+      }
+
       setEditingInventory(null);
-      await fetchInventories();
+
+      // Si teníamos este inventario abierto, refrescar su encabezado
+      if (selectedInventory && selectedInventory.id === editingInventory.id) {
+        setSelectedInventory(prev => ({
+          ...prev,
+          nombre: finalName,
+          seccion: finalSection,
+          period: finalPeriod,
+          period_label: finalPeriodLabel,
+          fecha_inventario: editInvDate,
+          observaciones: editInvNotes.trim()
+        }));
+      }
+
+      // Si el mes cambió a otro distinto del visualizado, navegar al mes modificado
+      if (finalPeriod !== selectedPeriod) {
+        setSelectedPeriod(finalPeriod);
+      } else {
+        await fetchInventories();
+      }
     } catch (err) {
       console.error('Error al editar inventario:', err);
-      alert('Error al guardar cambios.');
+      alert('Error al guardar los cambios del inventario.');
+    } finally {
+      setIsSavingInv(false);
     }
   };
 
@@ -360,10 +452,8 @@ export default function InventoryDifferences() {
       return;
     }
     try {
-      // 1. Eliminar documento del inventario
       await deleteDoc(doc(db, 'inventory_sheets', inv.id));
 
-      // 2. Eliminar los items de este inventario
       const itemsQ = query(
         collection(db, 'inventory_differences'),
         where('inventory_id', '==', inv.id)
@@ -414,7 +504,7 @@ export default function InventoryDifferences() {
     setCodeSuggestions([]);
   };
 
-  // Agregar producto a la lista de mermas del inventario seleccionado
+  // Agregar producto a la lista de mermas del inventario seleccionado Y FIJAR EN 'products'
   const handleAddItemToInventory = async (e) => {
     e.preventDefault();
     if (!selectedInventory) return;
@@ -431,16 +521,21 @@ export default function InventoryDifferences() {
 
     setIsSubmittingItem(true);
     try {
+      const cleanCode = newItemCode.trim();
+      const cleanDesc = newItemDesc.trim() || 'Sin descripción';
+      const cleanPCode = newProviderCode.trim();
+      const cleanPName = newProviderName.trim();
+
       const docData = {
         inventory_id: selectedInventory.id,
         inventory_name: selectedInventory.nombre,
         seccion: selectedInventory.seccion,
-        period: selectedPeriod,
-        period_label: formatPeriodLabel(selectedPeriod),
-        codigo_articulo: newItemCode.trim(),
-        descripcion: newItemDesc.trim() || 'Sin descripción',
-        codigo_proveedor: newProviderCode.trim(),
-        nombre_proveedor: newProviderName.trim(),
+        period: selectedInventory.period || selectedPeriod,
+        period_label: selectedInventory.period_label || formatPeriodLabel(selectedPeriod),
+        codigo_articulo: cleanCode,
+        descripcion: cleanDesc,
+        codigo_proveedor: cleanPCode,
+        nombre_proveedor: cleanPName,
         cantidad_inicial: qtyNum,
         cantidad_actual: qtyNum, // Cantidad pendiente de mermar
         cantidad_mermada: 0,
@@ -459,7 +554,38 @@ export default function InventoryDifferences() {
         updated_at: Timestamp.now()
       };
 
+      // 1. Guardar en inventory_differences
       await addDoc(collection(db, 'inventory_differences'), docData);
+
+      // 2. Guardar FIJO en la base de datos maestra de productos ('products')
+      const productKey = (cleanCode || cleanDesc).replace(/\//g, '-');
+      if (productKey) {
+        await setDoc(doc(db, 'products', productKey), {
+          codigo_articulo: cleanCode,
+          descripcion: cleanDesc,
+          codigo_proveedor: cleanPCode,
+          nombre_proveedor: cleanPName,
+          updated_at: new Date()
+        }, { merge: true });
+
+        // Actualizar el catálogo en memoria inmediatamente
+        setProductsCatalog(prev => {
+          const idx = prev.findIndex(p => (p.codigo_articulo || p.id) === cleanCode);
+          const newEntry = {
+            id: productKey,
+            codigo_articulo: cleanCode,
+            descripcion: cleanDesc,
+            codigo_proveedor: cleanPCode,
+            nombre_proveedor: cleanPName
+          };
+          if (idx >= 0) {
+            const copy = [...prev];
+            copy[idx] = { ...copy[idx], ...newEntry };
+            return copy;
+          }
+          return [newEntry, ...prev];
+        });
+      }
 
       setNewItemCode('');
       setNewItemDesc('');
@@ -610,7 +736,7 @@ export default function InventoryDifferences() {
     }
   };
 
-  // Editar datos completos de un producto
+  // Editar datos completos de un producto y actualizar en 'products'
   const handleOpenEditItem = (item) => {
     setEditingItem(item);
     setEditDesc(item.descripcion || '');
@@ -647,6 +773,16 @@ export default function InventoryDifferences() {
         estado: isCompleted ? 'completada' : (mermadaCalculada > 0 ? 'en_proceso' : 'pendiente'),
         updated_at: Timestamp.now()
       });
+
+      // Si tiene código de artículo, actualizar también en 'products'
+      if (editingItem.codigo_articulo) {
+        const prodDocId = editingItem.codigo_articulo.replace(/\//g, '-');
+        await setDoc(doc(db, 'products', prodDocId), {
+          codigo_articulo: editingItem.codigo_articulo,
+          descripcion: editDesc.trim(),
+          updated_at: new Date()
+        }, { merge: true });
+      }
 
       setEditingItem(null);
       if (selectedInventory) {
@@ -860,7 +996,7 @@ export default function InventoryDifferences() {
           {/* Botón para Crear Nuevo Inventario */}
           <button
             type="button"
-            onClick={() => setIsCreateInvModalOpen(true)}
+            onClick={handleOpenCreateModal}
             className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm shadow-indigo-200 cursor-pointer"
           >
             <FolderPlus size={15} />
@@ -978,13 +1114,10 @@ export default function InventoryDifferences() {
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setEditingInventory(inv);
-                              setEditInvName(inv.nombre);
-                              setEditInvDate(inv.fecha_inventario || '');
-                              setEditInvNotes(inv.observaciones || '');
+                              openEditInventory(inv);
                             }}
-                            className="p-1.5 text-slate-300 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                            title="Editar datos del inventario"
+                            className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                            title="Editar inventario completo (mes, sección, fecha, nombre)"
                           >
                             <Edit3 size={15} />
                           </button>
@@ -1075,15 +1208,28 @@ export default function InventoryDifferences() {
         /* ========================================================================= */
         <div className="space-y-6">
           
-          {/* Botón Volver al Listado de Inventarios */}
-          <button 
-            type="button"
-            onClick={() => setSelectedInventory(null)} 
-            className="flex items-center gap-2 text-slate-500 hover:text-indigo-600 transition-colors font-medium px-2 py-1 rounded-lg hover:bg-indigo-50 w-fit cursor-pointer"
-          >
-            <ArrowLeft size={18} />
-            <span>Volver a Inventarios del Mes</span>
-          </button>
+          {/* Barra de Acciones y Regreso */}
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <button 
+              type="button"
+              onClick={() => setSelectedInventory(null)} 
+              className="flex items-center gap-2 text-slate-500 hover:text-indigo-600 transition-colors font-semibold px-2 py-1.5 rounded-xl hover:bg-indigo-50 w-fit cursor-pointer text-xs sm:text-sm"
+            >
+              <ArrowLeft size={18} />
+              <span>Volver a Inventarios del Mes</span>
+            </button>
+
+            {/* Botón para Modificar este Inventario directamente */}
+            <button
+              type="button"
+              onClick={() => openEditInventory(selectedInventory)}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-white border border-slate-200 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700 rounded-xl text-xs font-bold text-slate-700 transition-all shadow-2xs cursor-pointer"
+              title="Modificar nombre, sección, fecha y mes al que corresponde este inventario"
+            >
+              <Edit3 size={14} className="text-indigo-600" />
+              <span>Modificar Inventario Completo</span>
+            </button>
+          </div>
 
           {/* Banner Principal del Inventario Seleccionado */}
           <div className="bg-gradient-to-br from-slate-800 to-indigo-900 rounded-2xl shadow-md p-6 md:p-8 text-white relative overflow-hidden">
@@ -1094,8 +1240,8 @@ export default function InventoryDifferences() {
                     <span>{getSectionBadge(selectedInventory.seccion).icon}</span>
                     <span>{selectedInventory.seccion}</span>
                   </span>
-                  <span className="text-white/60 text-xs">
-                    • Período: {formatPeriodLabel(selectedInventory.period)}
+                  <span className="text-white/70 text-xs font-semibold">
+                    • Mes: <strong>{formatPeriodLabel(selectedInventory.period)}</strong>
                   </span>
                 </div>
                 
@@ -1105,17 +1251,17 @@ export default function InventoryDifferences() {
 
                 <div className="flex items-center gap-3 text-white/80 text-xs">
                   <Calendar size={14} />
-                  <span>Fecha de Inventario: <strong>{selectedInventory.fecha_inventario || 'Sin definir'}</strong></span>
+                  <span>Fecha de Conteo: <strong>{selectedInventory.fecha_inventario || 'Sin definir'}</strong></span>
                 </div>
               </div>
 
               {/* Métricas rápidas en el banner */}
-              <div className="grid grid-cols-3 gap-3 bg-black/20 p-3 rounded-xl backdrop-blur-sm shrink-0 text-center">
+              <div className="grid grid-cols-3 gap-3 bg-black/25 p-3.5 rounded-xl backdrop-blur-sm shrink-0 text-center border border-white/10">
                 <div className="px-2">
                   <span className="block text-[10px] text-white/70 uppercase font-bold">Artículos</span>
                   <span className="text-lg font-black">{inventoryItems.length}</span>
                 </div>
-                <div className="px-2 border-x border-white/10">
+                <div className="px-2 border-x border-white/15">
                   <span className="block text-[10px] text-amber-300 uppercase font-bold">Por Mermar</span>
                   <span className="text-lg font-black text-amber-300">
                     {inventoryItems.reduce((acc, i) => acc + (parseFloat(i.cantidad_actual) || 0), 0).toFixed(2).replace(/\.00$/, '')}
@@ -1143,7 +1289,7 @@ export default function InventoryDifferences() {
                 <div>
                   <h3 className="font-bold text-slate-800 text-sm md:text-base">Añadir Producto a Mermar</h3>
                   <p className="text-[11px] text-slate-400">
-                    Sección: <strong>{selectedInventory.seccion}</strong>
+                    Se guarda también fijo en la pestaña <strong>Productos</strong>
                   </p>
                 </div>
               </div>
@@ -1169,7 +1315,7 @@ export default function InventoryDifferences() {
                           key={sug.id}
                           type="button"
                           onClick={() => handleSelectSuggestion(sug)}
-                          className="w-full text-left p-2 hover:bg-amber-50 rounded-lg text-xs transition-colors flex items-center justify-between gap-2"
+                          className="w-full text-left p-2 hover:bg-amber-50 rounded-lg text-xs transition-colors flex items-center justify-between gap-2 cursor-pointer"
                         >
                           <div className="min-w-0">
                             <span className="font-mono font-bold text-amber-700 block truncate">
@@ -1537,7 +1683,7 @@ export default function InventoryDifferences() {
                 <div>
                   <h3 className="font-bold text-slate-800 text-base">Crear Nuevo Inventario</h3>
                   <p className="text-[11px] text-slate-400">
-                    Mes: <strong>{formatPeriodLabel(selectedPeriod)}</strong>
+                    Mes: <strong>{formatPeriodLabel(newInvPeriod)}</strong>
                   </p>
                 </div>
               </div>
@@ -1551,6 +1697,25 @@ export default function InventoryDifferences() {
             </div>
 
             <form onSubmit={handleCreateInventory} className="space-y-4">
+              {/* Mes al que corresponde */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Mes al que Corresponde el Inventario
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="month"
+                    value={newInvPeriod}
+                    onChange={(e) => setNewInvPeriod(e.target.value)}
+                    className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer"
+                    required
+                  />
+                  <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-3 py-2 rounded-xl border border-indigo-100">
+                    {formatPeriodLabel(newInvPeriod)}
+                  </span>
+                </div>
+              </div>
+
               {/* Selector de Sección */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
@@ -1663,46 +1828,125 @@ export default function InventoryDifferences() {
         </div>
       )}
 
-      {/* MODAL: Editar Inventario */}
+      {/* MODAL: Modificar Inventario Completo (Nombre, Sección, Mes, Fecha, Notas) */}
       {editingInventory && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200/80 max-w-md w-full p-6 space-y-4 animate-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200/80 max-w-lg w-full p-6 space-y-4 animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <Edit3 size={18} className="text-slate-600" />
-                <h3 className="font-bold text-slate-800 text-base">Modificar Inventario</h3>
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-100">
+                  <Edit3 size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800 text-base">Modificar Inventario</h3>
+                  <p className="text-[11px] text-slate-400">Puedes cambiar el mes, sección, fecha o nombre</p>
+                </div>
               </div>
               <button 
                 type="button" 
                 onClick={() => setEditingInventory(null)}
-                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <form onSubmit={handleSaveEditInventory} className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Nombre</label>
-                <input
-                  type="text"
-                  value={editInvName}
-                  onChange={(e) => setEditInvName(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800"
-                  required
-                />
+            <form onSubmit={handleSaveEditInventory} className="space-y-4">
+              
+              {/* Selector del Mes al que corresponde */}
+              <div className="bg-amber-50/70 p-3 rounded-xl border border-amber-200/60 space-y-1.5">
+                <label className="block text-xs font-bold text-amber-900 uppercase tracking-wider">
+                  Mes al que Corresponde (Período)
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="month"
+                    value={editInvPeriod}
+                    onChange={(e) => setEditInvPeriod(e.target.value)}
+                    className="p-2 bg-white border border-amber-300 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer shadow-2xs"
+                    required
+                  />
+                  <span className="text-xs font-extrabold text-amber-800 bg-white px-3 py-2 rounded-xl border border-amber-300 shadow-2xs">
+                    {formatPeriodLabel(editInvPeriod)}
+                  </span>
+                </div>
+                <p className="text-[11px] text-amber-800/80">
+                  💡 Si cambias el mes, este inventario y todos sus productos registrados se trasladarán al mes indicado.
+                </p>
               </div>
 
+              {/* Selector de Sección */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Fecha</label>
-                <input
-                  type="date"
-                  value={editInvDate}
-                  onChange={(e) => setEditInvDate(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700"
-                />
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Sección
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {DEFAULT_SECTIONS.map((sec) => (
+                    <button
+                      key={sec.id}
+                      type="button"
+                      onClick={() => setEditInvSection(sec.name)}
+                      className={`flex items-center gap-2 p-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                        editInvSection === sec.name
+                          ? 'border-indigo-600 bg-indigo-50/70 text-indigo-700 ring-2 ring-indigo-500/20'
+                          : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span>{sec.icon}</span>
+                      <span className="truncate">{sec.name}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditInvSection('Otra')}
+                    className={`w-full py-1.5 px-3 rounded-lg text-xs font-medium border text-left cursor-pointer transition-all ${
+                      editInvSection === 'Otra'
+                        ? 'border-indigo-600 bg-indigo-50 text-indigo-700'
+                        : 'border-dashed border-slate-200 text-slate-500 hover:bg-slate-50'
+                    }`}
+                  >
+                    + Otra sección personalizada...
+                  </button>
+                  {editInvSection === 'Otra' && (
+                    <input
+                      type="text"
+                      value={editInvCustomSection}
+                      onChange={(e) => setEditInvCustomSection(e.target.value)}
+                      placeholder="Escribe el nombre de la sección..."
+                      className="w-full mt-1.5 p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-semibold text-slate-800"
+                    />
+                  )}
+                </div>
               </div>
 
+              {/* Nombre y Fecha */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Nombre</label>
+                  <input
+                    type="text"
+                    value={editInvName}
+                    onChange={(e) => setEditInvName(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 outline-none focus:border-indigo-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Fecha de Conteo</label>
+                  <input
+                    type="date"
+                    value={editInvDate}
+                    onChange={(e) => setEditInvDate(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              {/* Observaciones */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">Observaciones</label>
                 <textarea
@@ -1717,15 +1961,16 @@ export default function InventoryDifferences() {
                 <button
                   type="button"
                   onClick={() => setEditingInventory(null)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white"
+                  disabled={isSavingInv}
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-sm shadow-indigo-200 cursor-pointer disabled:opacity-50"
                 >
-                  Guardar Cambios
+                  {isSavingInv ? 'Guardando...' : 'Guardar Cambios'}
                 </button>
               </div>
             </form>
