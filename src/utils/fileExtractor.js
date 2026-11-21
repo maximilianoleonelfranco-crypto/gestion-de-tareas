@@ -10,8 +10,8 @@ export const getGeminiApiKey = () => {
   );
 };
 
-// Convierte un archivo a Base64
-const fileToBase64 = (file) => {
+// Convierte un archivo genérico a Base64
+const fileToBase64Raw = (file) => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -24,6 +24,68 @@ const fileToBase64 = (file) => {
   });
 };
 
+/**
+ * Comprime y redimensiona imágenes en el navegador antes de enviarlas a la IA.
+ * Reduce fotos de cámara móvil (8-15 MB, 4000x3000px) a ~350 KB manteniendo
+ * nitidez óptima para lectura de códigos y textos, evitando fallos por límite de tamaño en 4G.
+ */
+const compressImageIfNeeded = async (file) => {
+  // Si estamos en entorno Node.js o sin DOM
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return fileToBase64Raw(file);
+  }
+
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const MAX_DIM = 1800;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > MAX_DIM || height > MAX_DIM) {
+            if (width > height) {
+              height = Math.round((height * MAX_DIM) / width);
+              width = MAX_DIM;
+            } else {
+              width = Math.round((width * MAX_DIM) / height);
+              height = MAX_DIM;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          
+          // Fondo blanco en caso de PNG con transparencias
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Exportar como JPEG con calidad 0.85 (altísima calidad visual y tamaño súper ligero)
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          const base64 = dataUrl.split(',')[1];
+          resolve({ base64, mimeType: 'image/jpeg' });
+        } catch {
+          // Fallback seguro si falla el canvas
+          fileToBase64Raw(file).then(resolve);
+        }
+      };
+      img.onerror = () => {
+        fileToBase64Raw(file).then(resolve);
+      };
+      img.src = e.target.result;
+    };
+    reader.onerror = () => {
+      fileToBase64Raw(file).then(resolve);
+    };
+    reader.readAsDataURL(file);
+  });
+};
+
 // Convierte archivo Excel (.xlsx / .xls) a texto estructurado
 const parseExcelToText = async (file) => {
   const buffer = await file.arrayBuffer();
@@ -32,7 +94,6 @@ const parseExcelToText = async (file) => {
 
   workbook.SheetNames.forEach((sheetName) => {
     const sheet = workbook.Sheets[sheetName];
-    // Convertir a CSV para que los delimitadores sean claros
     const csv = XLSX.utils.sheet_to_csv(sheet);
     if (csv && csv.trim().length > 0) {
       lines.push(`--- HOJA: ${sheetName} ---`);
@@ -52,6 +113,9 @@ const readTextFile = (file) => {
     reader.readAsText(file);
   });
 };
+
+// Pausa para reintentos ante saturación de red/503
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Extrae productos y proveedores desde cualquier tipo de archivo usando Gemini.
@@ -73,11 +137,12 @@ export async function extractProductsFromFile(file, options = {}) {
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
-  // Probamos gemini-2.5-flash y gemini-2.0-flash como fallback
-  const modelNames = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+  
+  // Modelos activos y modernos en Google AI Studio (sin versiones obsoletas)
+  const modelNames = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-3.8-flash'];
 
   const promptText = `Eres un asistente experto en digitalización de catálogos y ofertas de supermercados y distribuidoras.
-Tu tarea es analizar el documento adjunto (puede ser una imagen de una hoja impresa, un PDF, un Excel o un archivo de texto) y extraer de forma exhaustiva y precisa la lista de todos los productos en oferta o inventario.
+Tu tarea es analizar el documento adjunto (puede ser una foto de una hoja impresa, un PDF, un Excel o un archivo de texto) y extraer de forma exhaustiva y precisa la lista de todos los productos en oferta o inventario.
 
 Para CADA producto debes extraer:
 1. "codigo_articulo": El código numérico o alfanumérico del producto / artículo (generalmente de 4 a 8 dígitos, ej: 243313, 12018, 300947, 360120, etc.).
@@ -108,15 +173,26 @@ Formato de salida esperado:
   const isExcel = /\.(xlsx|xls)$/i.test(fileName) || file.type.includes('spreadsheet') || file.type.includes('excel');
   const isText = file.type.startsWith('text/') || /\.(txt|csv|tsv|dat|json)$/i.test(fileName);
 
-  if (isImage || isPdf) {
-    const { base64, mimeType } = await fileToBase64(file);
-    const resolvedMime = isPdf ? 'application/pdf' : (file.type || 'image/jpeg');
+  if (isImage) {
+    // Comprimir imagen en el navegador para subida ultra rápida y evitar rechazos por payload
+    const { base64, mimeType } = await compressImageIfNeeded(file);
     contentParts = [
       promptText,
       {
         inlineData: {
           data: base64,
-          mimeType: resolvedMime
+          mimeType: mimeType || 'image/jpeg'
+        }
+      }
+    ];
+  } else if (isPdf) {
+    const { base64 } = await fileToBase64Raw(file);
+    contentParts = [
+      promptText,
+      {
+        inlineData: {
+          data: base64,
+          mimeType: 'application/pdf'
         }
       }
     ];
@@ -131,22 +207,22 @@ Formato de salida esperado:
       `${promptText}\n\nAquí tienes el contenido del archivo de texto:\n${textContent}`
     ];
   } else {
-    // Para otros tipos de archivos, intentamos leer como texto primero, o como base64
+    // Para otros tipos de archivos, intentamos como imagen o texto
     try {
-      const textContent = await readTextFile(file);
-      contentParts = [
-        `${promptText}\n\nContenido del archivo:\n${textContent}`
-      ];
-    } catch {
-      const { base64, mimeType } = await fileToBase64(file);
+      const { base64, mimeType } = await compressImageIfNeeded(file);
       contentParts = [
         promptText,
         {
           inlineData: {
             data: base64,
-            mimeType: mimeType || 'application/octet-stream'
+            mimeType: mimeType || 'image/jpeg'
           }
         }
+      ];
+    } catch {
+      const textContent = await readTextFile(file);
+      contentParts = [
+        `${promptText}\n\nContenido del archivo:\n${textContent}`
       ];
     }
   }
@@ -154,68 +230,76 @@ Formato de salida esperado:
   let lastError = null;
 
   for (const modelName of modelNames) {
-    try {
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        generationConfig: {
-          temperature: 0.1,
-          responseMimeType: 'application/json'
-        }
-      });
-
-      const response = await model.generateContent(contentParts);
-      let rawText = response.response.text();
-
-      // Limpieza de formato markdown si lo hubiera
-      rawText = rawText.trim();
-      if (rawText.startsWith('```json')) {
-        rawText = rawText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-      } else if (rawText.startsWith('```')) {
-        rawText = rawText.replace(/^```\s*/, '').replace(/\s*```$/, '');
-      }
-
-      const parsedItems = JSON.parse(rawText);
-
-      if (!Array.isArray(parsedItems)) {
-        throw new Error('El modelo no devolvió una lista de productos.');
-      }
-
-      // Normalización y enriquecimiento de items
-      const cleanItems = parsedItems
-        .filter((item) => item && (item.codigo_articulo || item.descripcion))
-        .map((item, index) => {
-          let artCode = String(item.codigo_articulo || '').trim();
-          let provCode = String(item.codigo_proveedor || '').trim();
-          const desc = String(item.descripcion || '').trim();
-
-          // Si no tiene código de proveedor y el usuario especificó uno por defecto
-          if (!provCode && defaultProviderCode) {
-            provCode = defaultProviderCode.trim();
+    // Intentar hasta 2 veces por modelo en caso de 503 temporal (spike de demanda)
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: {
+            temperature: 0.1,
+            responseMimeType: 'application/json'
           }
-
-          return {
-            tempId: `${Date.now()}-${index}-${Math.random().toString(36).substring(2, 7)}`,
-            codigo_articulo: artCode,
-            codigo_proveedor: provCode,
-            descripcion: desc,
-            nombre_proveedor: '' // Se llenará en la UI al consultar proveedores
-          };
         });
 
-      return {
-        success: true,
-        items: cleanItems,
-        totalExtracted: cleanItems.length,
-        modelUsed: modelName
-      };
-    } catch (err) {
-      console.warn(`Fallo con el modelo ${modelName}:`, err.message);
-      lastError = err;
-      // Probar siguiente modelo
+        const response = await model.generateContent(contentParts);
+        let rawText = response.response.text();
+
+        // Limpieza de formato markdown si lo hubiera
+        rawText = rawText.trim();
+        if (rawText.startsWith('```json')) {
+          rawText = rawText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+        } else if (rawText.startsWith('```')) {
+          rawText = rawText.replace(/^```\s*/, '').replace(/\s*```$/, '');
+        }
+
+        const parsedItems = JSON.parse(rawText);
+
+        if (!Array.isArray(parsedItems)) {
+          throw new Error('El modelo no devolvió una lista de productos.');
+        }
+
+        // Normalización y enriquecimiento de items
+        const cleanItems = parsedItems
+          .filter((item) => item && (item.codigo_articulo || item.descripcion))
+          .map((item, index) => {
+            let artCode = String(item.codigo_articulo || '').trim();
+            let provCode = String(item.codigo_proveedor || '').trim();
+            const desc = String(item.descripcion || '').trim();
+
+            if (!provCode && defaultProviderCode) {
+              provCode = defaultProviderCode.trim();
+            }
+
+            return {
+              tempId: `${Date.now()}-${index}-${Math.random().toString(36).substring(2, 7)}`,
+              codigo_articulo: artCode,
+              codigo_proveedor: provCode,
+              descripcion: desc,
+              nombre_proveedor: ''
+            };
+          });
+
+        return {
+          success: true,
+          items: cleanItems,
+          totalExtracted: cleanItems.length,
+          modelUsed: modelName
+        };
+      } catch (err) {
+        lastError = err;
+        console.warn(`Intento ${attempt} con modelo ${modelName} falló:`, err.message);
+        
+        // Si es 503 (alta demanda temporal), esperar 1.2s y reintentar
+        if (err.message && err.message.includes('503') && attempt < 2) {
+          await sleep(1200);
+          continue;
+        }
+        break; // Pasar al siguiente modelo
+      }
     }
   }
 
   throw new Error(
-    `No se pudo procesar el archivo con IA: ${lastError?.message || 'Error desconocido'}`
+    `No se pudo procesar el archivo con IA: ${lastError?.message || 'Error de conexión'}`
   );
 }
